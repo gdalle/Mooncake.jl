@@ -42,7 +42,7 @@ jobs:
         version:
           - 'lts'
           - '1'
-          - '1.12'
+          - 'rc'
         arch:
           - x64
         include:
