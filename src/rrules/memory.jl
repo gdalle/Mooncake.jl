@@ -14,35 +14,35 @@
 
 const Maybe{T} = Union{Nothing,T}
 
-@tt_effects tangent_type(::Type{<:Memory{P}}) where {P} = Memory{tangent_type(P)}
+@foldable tangent_type(::Type{<:Memory{P}}) where {P} = Memory{tangent_type(P)}
 
-function zero_tangent_internal(x::Memory{P}, stackdict::Maybe{IdDict}) where {P}
+function zero_tangent_internal(x::Memory{P}, dict::MaybeCache) where {P}
     T = tangent_type(typeof(x))
 
-    # If no stackdict is provided, then the caller promises that there is no need for it.
-    if stackdict === nothing
+    # If no dict is provided, then the caller promises that there is no need for it.
+    if dict === nothing
         t = T(undef, length(x))
-        return _map_if_assigned!(Base.Fix2(zero_tangent_internal, stackdict), t, x)::T
+        return _map_if_assigned!(Base.Fix2(zero_tangent_internal, dict), t, x)::T
     end
 
     # If we've seen this primal before, then we have a circular reference, and must return
     # the tangent which has already been allocated for it.
-    haskey(stackdict, x) && return stackdict[x]::T
+    haskey(dict, x) && return dict[x]::T
 
     # We have not seen this primal before, so allocate + store the tangent for it, and zero
     # out the elements.
     t = T(undef, length(x))
-    stackdict[x] = t
-    return _map_if_assigned!(Base.Fix2(zero_tangent_internal, stackdict), t, x)::T
+    dict[x] = t
+    return _map_if_assigned!(Base.Fix2(zero_tangent_internal, dict), t, x)::T
 end
 
-function randn_tangent_internal(rng::AbstractRNG, x::Memory, stackdict::Maybe{IdDict})
+function randn_tangent_internal(rng::AbstractRNG, x::Memory, dict::MaybeCache)
     T = tangent_type(typeof(x))
-    haskey(stackdict, x) && return stackdict[x]::T
+    haskey(dict, x) && return dict[x]::T
 
     t = T(undef, length(x))
-    stackdict[x] = t
-    return _map_if_assigned!(x -> randn_tangent_internal(rng, x, stackdict), t, x)::T
+    dict[x] = t
+    return _map_if_assigned!(x -> randn_tangent_internal(rng, x, dict), t, x)::T
 end
 
 function TestUtils.has_equal_data_internal(
@@ -95,19 +95,6 @@ function _diff_internal(c::MaybeCache, p::Memory{P}, q::Memory{P}) where {P}
     return _map_if_assigned!((p, q) -> _diff_internal(c, p, q), t, p, q)
 end
 
-function _dot_internal(c::MaybeCache, t::Memory{T}, s::Memory{T}) where {T}
-    key = (t, s)
-    haskey(c, key) && return c[key]::Float64
-    c[key] = 0.0
-    isbitstype(T) && return sum(_map((t, s) -> _dot_internal(c, t, s), t, s))
-    return sum(
-        _map(eachindex(t)) do n
-            (isassigned(t, n) && isassigned(s, n)) ? _dot_internal(c, t[n], s[n]) : 0.0
-        end;
-        init=0.0,
-    )
-end
-
 function _scale_internal(c::MaybeCache, a::Float64, t::Memory{T}) where {T}
     haskey(c, t) && return c[t]::Memory{T}
     t′ = Memory{T}(undef, length(t))
@@ -132,7 +119,7 @@ end
 
 # FData / RData Interface Implementation
 
-tangent_type(::Type{F}, ::Type{NoRData}) where {F<:Memory} = F
+@foldable tangent_type(::Type{F}, ::Type{NoRData}) where {F<:Memory} = F
 
 tangent(f::Memory, ::NoRData) = f
 
@@ -150,31 +137,31 @@ end
 # Array -- tangent interface implementation
 #
 
-@inline function zero_tangent_internal(x::Array, stackdict::Maybe{IdDict})
+@inline function zero_tangent_internal(x::Array, dict::MaybeCache)
     T = tangent_type(typeof(x))
 
     # If we already have a tangent for this, just return that.
-    haskey(stackdict, x) && return stackdict[x]::T
+    haskey(dict, x) && return dict[x]::T
 
-    # Construct a new tangent, log it in the `stackdict`, and return it.
+    # Construct a new tangent, log it in the `dict`, and return it.
     dx = _new_(T)
     Base.setfield!(dx, :size, x.size)
-    stackdict[x] = dx
-    Base.setfield!(dx, :ref, zero_tangent_internal(x.ref, stackdict))
+    dict[x] = dx
+    Base.setfield!(dx, :ref, zero_tangent_internal(x.ref, dict))
     return dx::T
 end
 
-function randn_tangent_internal(rng::AbstractRNG, x::Array, stackdict::Maybe{IdDict})
+function randn_tangent_internal(rng::AbstractRNG, x::Array, dict::MaybeCache)
     T = tangent_type(typeof(x))
 
     # If we already have a tangent for this, just return that.
-    haskey(stackdict, x) && return stackdict[x]::T
+    haskey(dict, x) && return dict[x]::T
 
-    # Construct a new tangent, log it in the `stackdict`, and return it.
+    # Construct a new tangent, log it in the `dict`, and return it.
     dx = _new_(T)
     Base.setfield!(dx, :size, x.size)
-    stackdict[x] = dx
-    Base.setfield!(dx, :ref, randn_tangent_internal(rng, x.ref, stackdict))
+    dict[x] = dx
+    Base.setfield!(dx, :ref, randn_tangent_internal(rng, x.ref, dict))
     return dx::T
 end
 
@@ -198,17 +185,20 @@ function _scale_internal(c::MaybeCache, a::Float64, t::T) where {T<:Array}
     return _map_if_assigned!(t -> _scale_internal(c, a, t), t′, t)
 end
 
-function _dot_internal(c::MaybeCache, t::T, s::T) where {T<:Array}
-    key = (t, s)
-    haskey(c, key) && return c[key]::Float64
-    c[key] = 0.0
-    isbitstype(T) && return sum(_map((t, s) -> _dot_internal(c, t, s), t, s))
-    return sum(
-        _map(eachindex(t)) do n
-            (isassigned(t, n) && isassigned(s, n)) ? _dot_internal(c, t[n], s[n]) : 0.0
-        end;
-        init=0.0,
-    )
+for A in (Array, Memory)
+    @eval function _dot_internal(c::MaybeCache, t::T, s::T) where {T<:$A}
+        key = (t, s)
+        haskey(c, key) && return c[key]::Float64
+        c[key] = 0.0
+        bitstype = Val(isbitstype(eltype(T)))
+        return sum(eachindex(t, s); init=0.0) do i
+            if bitstype isa Val{true} || (isassigned(t, i) && isassigned(s, i))
+                _dot_internal(c, t[i], s[i])::Float64
+            else
+                0.0
+            end
+        end
+    end
 end
 
 function _add_to_primal_internal(
@@ -265,7 +255,9 @@ function rrule!!(
         # Increment gradients.
         @inbounds for i in 1:n
             src_ref = memoryref(src.dx, i)
-            src_ref[] = increment!!(src_ref[], memoryref(tmp, i)[])
+            if isassigned(src_ref)
+                src_ref[] = increment!!(src_ref[], memoryref(tmp, i)[])
+            end
         end
 
         return ntuple(_ -> NoRData(), 4)
@@ -279,7 +271,7 @@ end
 
 # Tangent Interface Implementation
 
-@tt_effects tangent_type(::Type{<:MemoryRef{P}}) where {P} = MemoryRef{tangent_type(P)}
+@foldable tangent_type(::Type{<:MemoryRef{P}}) where {P} = MemoryRef{tangent_type(P)}
 
 #=
 Given a new chunk of memory `m`, construct a `MemoryRef` which points to the same relative
@@ -298,12 +290,12 @@ function construct_ref(x::MemoryRef, m::Memory)
     return isempty(m) ? memoryref(m) : memoryref(m, Core.memoryrefoffset(x))
 end
 
-function zero_tangent_internal(x::MemoryRef, stackdict::Maybe{IdDict})
-    return construct_ref(x, zero_tangent_internal(x.mem, stackdict))
+function zero_tangent_internal(x::MemoryRef, dict::MaybeCache)
+    return construct_ref(x, zero_tangent_internal(x.mem, dict))
 end
 
-function randn_tangent_internal(rng::AbstractRNG, x::MemoryRef, stackdict::Maybe{IdDict})
-    return construct_ref(x, randn_tangent_internal(rng, x.mem, stackdict))
+function randn_tangent_internal(rng::AbstractRNG, x::MemoryRef, dict::MaybeCache)
+    return construct_ref(x, randn_tangent_internal(rng, x.mem, dict))
 end
 
 function TestUtils.has_equal_data_internal(
@@ -334,7 +326,7 @@ end
 
 function _dot_internal(c::MaybeCache, t::T, s::T) where {T<:MemoryRef}
     @assert Core.memoryrefoffset(t) == Core.memoryrefoffset(s)
-    return _dot_internal(c, t.mem, s.mem)
+    return _dot_internal(c, t.mem, s.mem)::Float64
 end
 
 function _scale_internal(c::MaybeCache, a::Float64, t::MemoryRef)
@@ -351,7 +343,7 @@ fdata_type(::Type{<:MemoryRef{T}}) where {T} = MemoryRef{T}
 
 rdata_type(::Type{<:MemoryRef}) = NoRData
 
-tangent_type(::Type{<:MemoryRef{T}}, ::Type{NoRData}) where {T} = MemoryRef{T}
+@foldable tangent_type(::Type{<:MemoryRef{T}}, ::Type{NoRData}) where {T} = MemoryRef{T}
 
 tangent(f::MemoryRef, ::NoRData) = f
 
@@ -529,7 +521,7 @@ function rrule!!(
     ::CoDual{Type{Memory{P}}}, ::CoDual{UndefInitializer}, n::CoDual{Int}
 ) where {P}
     x = Memory{P}(undef, primal(n))
-    dx = zero_tangent_internal(x, nothing)
+    dx = zero_tangent_internal(x, NoCache())
     return CoDual(x, dx), NoPullback((NoRData(), NoRData(), NoRData()))
 end
 
@@ -553,6 +545,25 @@ function rrule!!(
     y = _new_(Array{P,N}, ref.x, size.x)
     dy = _new_(Array{tangent_type(P),N}, ref.dx, size.x)
     return CoDual(y, dy), NoPullback(ntuple(_ -> NoRData(), 4))
+end
+
+function rrule!!(
+    ::CoDual{typeof(_foreigncall_)},
+    ::CoDual{Val{:jl_genericmemory_copy}},
+    ::CoDual,
+    ::CoDual{Tuple{Val{Any}}},
+    ::CoDual{Val{0}},
+    ::CoDual{Val{:ccall}},
+    x::CoDual{<:Memory},
+)
+    dx = x.dx
+    dx_copy = copy(dx)
+    y = CoDual(copy(x.x), dx_copy)
+    function jl_genericmemory_copy_pullback(::NoRData)
+        _map_if_assigned!(increment!!, dx, dx, dx_copy)
+        return tuple_fill(NoRData(), Val(7))
+    end
+    return y, jl_genericmemory_copy_pullback
 end
 
 # getfield / lgetfield rules for Memory, MemoryRef, and Array.
@@ -801,6 +812,15 @@ function generate_hand_written_rrule!!_test_cases(rng_ctor, ::Val{:memory})
             [randn(rng, 10), randn(rng, 3)].ref,
             2,
         ),
+        (
+            false,
+            :none,
+            nothing,
+            unsafe_copyto!,
+            memoryref(fill!(Memory{Any}(undef, 3), 4.0), 1),
+            memoryref(Memory{Any}(undef, 2)),
+            2,
+        ),
 
         # Rules for `Array`
         (false, :stability, nothing, _new_, Vector{Float64}, randn(rng, 10).ref, (10,)),
@@ -879,6 +899,8 @@ function generate_derived_rrule!!_test_cases(rng_ctor, ::Val{:memory})
         (true, :none, nothing, Array{Float64,0}, undef, ()),
         (true, :none, nothing, Array{Float64,4}, undef, (2, 3, 4, 5)),
         (true, :none, nothing, Array{Float64,5}, undef, (2, 3, 4, 5, 6)),
+        (false, :none, nothing, copy, Memory{Float64}(randn(5))),
+        (false, :none, nothing, copy, Memory{Any}([randn(5), 5.0])),
         (false, :none, nothing, copy, randn(5, 4)),
         (false, :none, nothing, Base._deletebeg!, randn(5), 0),
         (false, :none, nothing, Base._deletebeg!, randn(5), 2),

@@ -155,6 +155,8 @@ fdata_type(T)
 
 fdata_type(x) = throw(error("$x is not a type. Perhaps you meant typeof(x)?"))
 
+@foldable fdata_type(::Type{Union{}}) = Union{}
+
 fdata_type(::Type{T}) where {T<:IEEEFloat} = NoFData
 
 function fdata_type(::Type{PossiblyUninitTangent{T}}) where {T}
@@ -229,7 +231,7 @@ end
 Returns the type of to the nth field of the fdata type associated to `P`. Will be a
 `PossiblyUninitTangent` if said field can be undefined.
 """
-function fdata_field_type(::Type{P}, n::Int) where {P}
+@unstable @inline function fdata_field_type(::Type{P}, n::Int) where {P}
     Tf = tangent_type(fieldtype(P, n))
     f = ismutabletype(P) ? Tf : fdata_type(Tf)
     return is_always_initialised(P, n) ? f : PossiblyUninitTangent{f}
@@ -265,6 +267,11 @@ function fdata(t::T) where {T<:Union{Tuple,NamedTuple}}
     return fdata_type(T) == NoFData ? NoFData() : tuple_map(fdata, t)
 end
 
+"""
+    uninit_fdata(p)
+
+Equivalent to `fdata(uninit_tangent(p))`.
+"""
 uninit_fdata(p) = fdata(uninit_tangent(p))
 
 """
@@ -340,10 +347,12 @@ function __verify_fdata_value(c::IdDict{Any,Nothing}, p::Array, f::Array)
 end
 
 # (mutable) structs, Tuples, and NamedTuples all have slightly different storage.
-_get_fdata_field(f::NamedTuple, name) = getfield(f, name)
-_get_fdata_field(f::Tuple, name) = getfield(f, name)
-_get_fdata_field(f::FData, name) = val(getfield(f.data, name))
-_get_fdata_field(f::MutableTangent, name) = fdata(val(getfield(f.fields, name)))
+@unstable @inline _get_fdata_field(f::NamedTuple, name) = getfield(f, name)
+@unstable @inline _get_fdata_field(f::Tuple, name) = getfield(f, name)
+@unstable @inline _get_fdata_field(f::FData, name) = val(getfield(f.data, name))
+@unstable @inline _get_fdata_field(f::MutableTangent, name) = fdata(
+    val(getfield(f.fields, name))
+)
 
 function __verify_fdata_value(c::IdDict{Any,Nothing}, p, f)
 
@@ -418,6 +427,8 @@ See extended help in [`fdata_type`](@ref) docstring.
 rdata_type(T)
 
 rdata_type(x) = throw(error("$x is not a type. Perhaps you meant typeof(x)?"))
+
+@foldable rdata_type(::Type{Union{}}) = Union{}
 
 rdata_type(::Type{T}) where {T<:IEEEFloat} = T
 
@@ -610,7 +621,7 @@ has_definite_fieldcount(P) = P isa DataType && Base.datatype_fieldcount(P) !== n
 Returns whether or not the zero element of the rdata type for primal type `P` can be
 obtained from `P` alone.
 """
-@generated function can_produce_zero_rdata_from_type(::Type{P}) where {P}
+@foldable @generated function can_produce_zero_rdata_from_type(::Type{P}) where {P}
     if isstructtype(P) && has_definite_fieldcount(P)
         can_produces = map(_P -> :(can_produce_zero_rdata_from_type($_P)), fieldtypes(P))
     else
@@ -632,11 +643,11 @@ obtained from `P` alone.
     end
 end
 
-can_produce_zero_rdata_from_type(::Type{<:IEEEFloat}) = true
+@foldable can_produce_zero_rdata_from_type(::Type{<:IEEEFloat}) = true
 
-can_produce_zero_rdata_from_type(::Type{<:Type}) = true
+@foldable can_produce_zero_rdata_from_type(::Type{<:Type}) = true
 
-can_produce_zero_rdata_from_type(::Type{Union{}}) = true
+@foldable can_produce_zero_rdata_from_type(::Type{Union{}}) = true
 
 """
     CannotProduceZeroRDataFromType()
@@ -847,56 +858,80 @@ end
 Given the type of the fdata and rdata, `F` and `R` resp., for some primal type, compute its
 tangent type. This method must be equivalent to `tangent_type(_typeof(primal))`.
 """
-tangent_type(::Type{NoFData}, ::Type{NoRData}) = NoTangent
-tangent_type(::Type{NoFData}, ::Type{R}) where {R<:IEEEFloat} = R
-tangent_type(::Type{F}, ::Type{NoRData}) where {F<:Array} = F
+@foldable tangent_type(::Type{NoFData}, ::Type{NoRData}) = NoTangent
+@foldable tangent_type(::Type{NoFData}, ::Type{R}) where {R<:IEEEFloat} = R
+@foldable tangent_type(::Type{F}, ::Type{NoRData}) where {F<:Array} = F
+
+# Union types. NOTE: Only `Union{Nothing, Array{<:Any,N}, Base.IEEEFloat}` are supported.
+@foldable function tangent_type(
+    ::Type{NoFData}, ::Type{R}
+) where {R<:Union{NoRData,T} where {T<:Base.IEEEFloat}}
+    return tangent_type(R)
+end
+@foldable function tangent_type(
+    ::Type{F}, ::Type{NoRData}
+) where {F<:Union{NoFData,T} where {T}}
+    _validate_union(F)
+    return tangent_type(F)
+end
+function _validate_union(::Type{F}) where {F<:Union{NoFData,T} where {T}}
+    _T = F isa Union ? (F.a == NoFData ? F.b : F.a) : F
+    if rdata_type(tangent_type(_T)) != NoRData
+        throw(
+            InvalidFDataException("Something went wrong: called tangent_type($F, NoRData)")
+        )
+    end
+    return nothing
+end
 
 # Tuples
-@generated function tangent_type(::Type{F}, ::Type{R}) where {F<:Tuple,R<:Tuple}
+@foldable @generated function tangent_type(::Type{F}, ::Type{R}) where {F<:Tuple,R<:Tuple}
     tt_exprs = map((f, r) -> :(tangent_type($f, $r)), fieldtypes(F), fieldtypes(R))
     return Expr(:curly, :Tuple, tt_exprs...)
 end
-function tangent_type(::Type{NoFData}, ::Type{R}) where {R<:Tuple}
+@foldable function tangent_type(::Type{NoFData}, ::Type{R}) where {R<:Tuple}
     return tangent_type(Tuple{tuple_fill(NoFData, Val(length(R.parameters)))...}, R)
 end
-function tangent_type(::Type{F}, ::Type{NoRData}) where {F<:Tuple}
+@foldable function tangent_type(::Type{F}, ::Type{NoRData}) where {F<:Tuple}
     return tangent_type(F, Tuple{tuple_fill(NoRData, Val(length(F.parameters)))...})
 end
 
 # NamedTuples
-function tangent_type(::Type{F}, ::Type{R}) where {ns,F<:NamedTuple{ns},R<:NamedTuple{ns}}
+@foldable function tangent_type(
+    ::Type{F}, ::Type{R}
+) where {ns,F<:NamedTuple{ns},R<:NamedTuple{ns}}
     return NamedTuple{ns,tangent_type(tuple_type(F), tuple_type(R))}
 end
-function tangent_type(::Type{NoFData}, ::Type{R}) where {ns,R<:NamedTuple{ns}}
+@foldable function tangent_type(::Type{NoFData}, ::Type{R}) where {ns,R<:NamedTuple{ns}}
     return NamedTuple{ns,tangent_type(NoFData, tuple_type(R))}
 end
-function tangent_type(::Type{F}, ::Type{NoRData}) where {ns,F<:NamedTuple{ns}}
+@foldable function tangent_type(::Type{F}, ::Type{NoRData}) where {ns,F<:NamedTuple{ns}}
     return NamedTuple{ns,tangent_type(tuple_type(F), NoRData)}
 end
-tuple_type(::Type{<:NamedTuple{<:Any,T}}) where {T<:Tuple} = T
+@foldable tuple_type(::Type{<:NamedTuple{<:Any,T}}) where {T<:Tuple} = T
 
 # mutable structs
-tangent_type(::Type{F}, ::Type{NoRData}) where {F<:MutableTangent} = F
+@foldable tangent_type(::Type{F}, ::Type{NoRData}) where {F<:MutableTangent} = F
 
 # structs
-function tangent_type(::Type{F}, ::Type{R}) where {F<:FData,R<:RData}
+@foldable function tangent_type(::Type{F}, ::Type{R}) where {F<:FData,R<:RData}
     return Tangent{tangent_type(fields_type(F), fields_type(R))}
 end
-function tangent_type(::Type{NoFData}, ::Type{R}) where {R<:RData}
+@foldable function tangent_type(::Type{NoFData}, ::Type{R}) where {R<:RData}
     return Tangent{tangent_type(NoFData, fields_type(R))}
 end
-function tangent_type(::Type{F}, ::Type{NoRData}) where {F<:FData}
+@foldable function tangent_type(::Type{F}, ::Type{NoRData}) where {F<:FData}
     return Tangent{tangent_type(fields_type(F), NoRData)}
 end
 
-function tangent_type(
+@foldable function tangent_type(
     ::Type{PossiblyUninitTangent{F}}, ::Type{PossiblyUninitTangent{R}}
 ) where {F,R}
     return PossiblyUninitTangent{tangent_type(F, R)}
 end
 
 # Abstract types.
-tangent_type(::Type{Any}, ::Type{Any}) = Any
+@foldable tangent_type(::Type{Any}, ::Type{Any}) = Any
 
 """
     tangent(f, r)

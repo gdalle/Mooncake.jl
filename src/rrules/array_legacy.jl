@@ -1,21 +1,21 @@
-@inline function zero_tangent_internal(x::Array{P,N}, stackdict::IdDict) where {P,N}
-    haskey(stackdict, x) && return stackdict[x]::tangent_type(typeof(x))
+@inline function zero_tangent_internal(x::Array{P,N}, dict::MaybeCache) where {P,N}
+    haskey(dict, x) && return dict[x]::tangent_type(typeof(x))
 
     zt = Array{tangent_type(P),N}(undef, size(x)...)
-    stackdict[x] = zt
+    dict[x] = zt
     return _map_if_assigned!(
-        Base.Fix2(zero_tangent_internal, stackdict), zt, x
+        Base.Fix2(zero_tangent_internal, dict), zt, x
     )::Array{tangent_type(P),N}
 end
 
 function randn_tangent_internal(
-    rng::AbstractRNG, x::Array{T,N}, stackdict::IdDict
+    rng::AbstractRNG, x::Array{T,N}, dict::MaybeCache
 ) where {T,N}
-    haskey(stackdict, x) && return stackdict[x]::tangent_type(typeof(x))
+    haskey(dict, x) && return dict[x]::tangent_type(typeof(x))
 
     dx = Array{tangent_type(T),N}(undef, size(x)...)
-    stackdict[x] = dx
-    return _map_if_assigned!(x -> randn_tangent_internal(rng, x, stackdict), dx, x)
+    dict[x] = dx
+    return _map_if_assigned!(x -> randn_tangent_internal(rng, x, dict), dx, x)
 end
 
 function increment_internal!!(c::IncCache, x::T, y::T) where {P,N,T<:Array{P,N}}
@@ -41,13 +41,14 @@ function _dot_internal(c::MaybeCache, t::T, s::T) where {T<:Array}
     key = (t, s)
     haskey(c, key) && return c[key]::Float64
     c[key] = 0.0
-    isbitstype(T) && return sum(_map((t, s) -> _dot_internal(c, t, s), t, s))
-    return sum(
-        _map(eachindex(t)) do n
-            (isassigned(t, n) && isassigned(s, n)) ? _dot_internal(c, t[n], s[n]) : 0.0
-        end;
-        init=0.0,
-    )
+    bitstype = Val(isbitstype(eltype(T)))
+    return sum(eachindex(t, s); init=0.0) do i
+        if bitstype isa Val{true} || (isassigned(t, i) && isassigned(s, i))
+            _dot_internal(c, t[i], s[i])::Float64
+        else
+            0.0
+        end
+    end
 end
 
 function _add_to_primal_internal(
@@ -262,7 +263,11 @@ function rrule!!(
 
         # Increment dsrc.
         src_idx = _soffs:(_soffs + _n - 1)
-        dsrc[src_idx] .= increment!!.(view(dsrc, src_idx), view(ddest, dest_idx))
+        @inbounds for (s, d) in zip(src_idx, dest_idx)
+            if isassigned(dsrc, s)
+                dsrc[s] = increment!!(dsrc[s], ddest[d])
+            end
+        end
 
         # Restore initial state.
         @inbounds for n in eachindex(dest_copy)
@@ -449,6 +454,17 @@ function generate_hand_written_rrule!!_test_cases(rng_ctor, ::Val{:array_legacy}
             3,
         ),
         (
+            false,
+            :none,
+            nothing,
+            unsafe_copyto!,
+            fill!(Vector{Any}(undef, 3), 4.0),
+            1,
+            Vector{Any}(undef, 2),
+            1,
+            2,
+        ),
+        (
             true,
             :none,
             nothing,
@@ -486,7 +502,6 @@ function generate_hand_written_rrule!!_test_cases(rng_ctor, ::Val{:array_legacy}
             randn(4),
             1,
         ),
-        (false, :stability, nothing, Base.arrayset, false, _a, randn(4), 1),
         (
             false,
             :stability,

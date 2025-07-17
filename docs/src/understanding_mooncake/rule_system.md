@@ -205,7 +205,7 @@ must have signature
 Tuple{Trule, CoDual{typeof(foo), NoFData}, CoDual{Float64, NoFData}} ->
     Tuple{CoDual{Float64, NoFData}, Trvs_pass}
 ```
-For example, if we call `foo(5.0)`, it rules would be called as `rule(CoDual(foo, NoFData()), CoDual(5.0, NoFData()))`.
+For example, if we call `foo(5.0)`, its rules would be called as `rule(CoDual(foo, NoFData()), CoDual(5.0, NoFData()))`.
 The precise definition and role of `NoFData` will be explained shortly, but the general scheme is that to a rule for `foo` you must pass `foo` itself, its arguments, and some additional data for book-keeping.
 `foo` and each of its arguments are paired with this additional book-keeping data via the `CoDual` type.
 
@@ -273,14 +273,13 @@ Conversely, we refer to both inputs and outputs to the adjoint of this derivativ
 Note, however, that the sets involved are the same whether dealing with a derivative or its adjoint.
 Consequently, we use the same type to represent both.
 
-
 _**Representing Gradients**_
 
 This package assigns to each type in Julia a unique `tangent_type`, the purpose of which is to contain the gradients computed during reverse mode AD.
 The extended docstring for [`tangent_type`](@ref) provides the best introduction to the types which are used to represent tangents / gradients.
 
-```@docs
-tangent_type(P)
+```@docs; canonical=false
+Mooncake.tangent_type(P)
 ```
 
 
@@ -295,9 +294,14 @@ Conversely, the gradient w.r.t. a value type resides in another value type.
 
 The following docstring provides the best in-depth explanation.
 
-```@docs
+```@docs; canonical=false
 Mooncake.fdata_type(T)
 ```
+
+_**More Info**_
+
+See [Tangents](@ref) for complete information on what you must do if you wish to implement your own tangent type.
+(In the vast majority of cases this is unnecessary).
 
 _**CoDuals**_
 
@@ -327,7 +331,7 @@ Now that you've seen what data structures are used to represent gradients, we ca
 ```@meta
 DocTestSetup = quote
     using Mooncake
-    using Mooncake: CoDual
+    using Mooncake: CoDual, NoFData, NoRData
     import Mooncake: rrule!!
 end
 ```

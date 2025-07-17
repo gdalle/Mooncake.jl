@@ -78,10 +78,12 @@ lgetfield(x, ::Val{f}) where {f} = getfield(x, f)
     return y, pb!!
 end
 
-@inline _get_fdata_field(_, t::Union{Tuple,NamedTuple}, f) = getfield(t, f)
-@inline _get_fdata_field(_, data::FData, f) = val(getfield(data.data, f))
-@inline _get_fdata_field(primal, ::NoFData, f) = uninit_fdata(getfield(primal, f))
-@inline _get_fdata_field(_, t::MutableTangent, f) = fdata(val(getfield(t.fields, f)))
+@unstable @inline _get_fdata_field(_, t::Union{Tuple,NamedTuple}, f) = getfield(t, f)
+@unstable @inline _get_fdata_field(_, data::FData, f) = val(getfield(data.data, f))
+@unstable @inline _get_fdata_field(primal, ::NoFData, f) = uninit_fdata(getfield(primal, f))
+@unstable @inline _get_fdata_field(_, t::MutableTangent, f) = fdata(
+    val(getfield(t.fields, f))
+)
 
 increment_field_rdata!(dx::MutableTangent, ::NoRData, ::Val) = dx
 increment_field_rdata!(dx::NoFData, ::NoRData, ::Val) = dx
@@ -156,6 +158,24 @@ function lsetfield_rrule(
     end
     y = CoDual(lsetfield!(primal(value), Val(name), primal(x)), yf)
     return y, pb!!
+end
+
+@static if VERSION < v"1.11"
+    @is_primitive MinimalCtx Tuple{typeof(copy),Dict}
+    function rrule!!(::CoDual{typeof(copy)}, a::CoDual{<:Dict})
+        dx = tangent(a)
+        t = dx.fields
+        new_fields = typeof(t)((
+            copy(t.slots), copy(t.keys), copy(t.vals), tuple_fill(NoTangent(), Val(5))...
+        ))
+        dy = MutableTangent(new_fields)
+        y = CoDual(copy(primal(a)), dy)
+        function copy_pullback!!(::NoRData)
+            increment!!(dx, dy)
+            return NoRData(), NoRData()
+        end
+        return y, copy_pullback!!
+    end
 end
 
 function generate_hand_written_rrule!!_test_cases(rng_ctor, ::Val{:misc})
@@ -322,4 +342,11 @@ function generate_hand_written_rrule!!_test_cases(rng_ctor, ::Val{:misc})
     return test_cases, memory
 end
 
-generate_derived_rrule!!_test_cases(rng_ctor, ::Val{:misc}) = Any[], Any[]
+function generate_derived_rrule!!_test_cases(rng_ctor, ::Val{:misc})
+    test_cases = Any[
+        (false, :none, nothing, copy, Dict("A" => 5.0, "B" => 5.0)),
+        (false, :none, nothing, copy, Dict{Any,Any}("A" => [5.0], [3.0] => 5.0)),
+        (false, :none, nothing, () -> copy(Set())),
+    ]
+    return test_cases, Any[]
+end

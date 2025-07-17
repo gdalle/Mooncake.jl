@@ -3,9 +3,9 @@
 
 Central definition of typeof, which is specific to the use-required in this package.
 """
-_typeof(x) = Base._stable_typeof(x)
-_typeof(x::Tuple) = Tuple{tuple_map(_typeof, x)...}
-_typeof(x::NamedTuple{names}) where {names} = NamedTuple{names,_typeof(Tuple(x))}
+@unstable _typeof(x) = Base._stable_typeof(x)
+@unstable _typeof(x::Tuple) = Tuple{tuple_map(_typeof, x)...}
+@unstable _typeof(x::NamedTuple{names}) where {names} = NamedTuple{names,_typeof(Tuple(x))}
 
 """
     tuple_map(f::F, x::Tuple) where {F}
@@ -68,14 +68,38 @@ end
 end
 
 """
+    _findall(cond, x::Tuple)
+
+Type-stable version of `findall` for `Tuple`s. Should constant-fold if `cond` can be
+determined from the type of `x`.
+"""
+@inline @generated function _findall(cond, x::Tuple)
+
+    # Initially we have found nothing.
+    y = :(y = ())
+
+    # For each element in `x`, if it satisfies `cond`, insert its index into `y`.
+    exprs = map(n -> :(y = cond(x[$n]) ? ($n, y...) : y), 1:fieldcount(x))
+
+    # Combine all expressions into a single block and return.
+    return Expr(:block, y, exprs...)
+end
+
+"""
     stable_all(x::NTuple{N, Bool}) where {N}
 
 `all(x::NTuple{N, Bool})` does not constant-fold nicely on 1.10 if the values of `x` are
 known statically. This implementation constant-folds nicely on both 1.10 and 1.11, so can
 be used in its place in situations where this is important.
 """
-stable_all(x::NTuple{1,Bool}) = x[1]
-stable_all(x::NTuple{N,Bool}) where {N} = x[1] & stable_all(x[2:end])
+@generated function stable_all(x::NTuple{N,Bool}) where {N}
+
+    # For each element in `x`, if it is `false`, return `false`.
+    exprs = map(n -> :(x[$n] || return false), 1:N)
+
+    # I've we've not found any false elements, return `true`.
+    return Expr(:block, exprs..., :(return true))
+end
 
 """
     _map_if_assigned!(f, y::DenseArray, x::DenseArray{P}) where {P}
@@ -124,7 +148,7 @@ end
 Same as `map` but requires all elements of `x` to have equal length.
 The usual function `map` doesn't enforce this for `Array`s.
 """
-@inline function _map(f::F, x::Vararg{Any,N}) where {F,N}
+@unstable @inline function _map(f::F, x::Vararg{Any,N}) where {F,N}
     @assert allequal(map(length, x))
     return map(f, x...)
 end

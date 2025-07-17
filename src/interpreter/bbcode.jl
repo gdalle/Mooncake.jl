@@ -1,6 +1,71 @@
-# See the docstring for `BBCode` for some context on this file.
+"""
+    module BasicBlockCode
+
+See the docstring for the `BBCode` `struct` for info on this file.
+"""
+module BasicBlockCode
+
+using Graphs
+
+using Core.Compiler:
+    ReturnNode,
+    PhiNode,
+    GotoIfNot,
+    GotoNode,
+    NewInstruction,
+    IRCode,
+    SSAValue,
+    PiNode,
+    Argument
+const CC = Core.Compiler
+
+export ID,
+    seed_id!,
+    IDPhiNode,
+    IDGotoNode,
+    IDGotoIfNot,
+    Switch,
+    BBlock,
+    phi_nodes,
+    terminator,
+    insert_before_terminator!,
+    collect_stmts,
+    compute_all_predecessors,
+    BBCode,
+    remove_unreachable_blocks!,
+    characterise_used_ids,
+    characterise_unique_predecessor_blocks,
+    sort_blocks!,
+    InstVector,
+    IDInstPair,
+    __line_numbers_to_block_numbers!,
+    is_reachable_return_node,
+    new_inst
 
 const _id_count::Dict{Int,Int32} = Dict{Int,Int32}()
+
+"""
+    new_inst(stmt, type=Any, flag=CC.IR_FLAG_REFINED)::NewInstruction
+
+Create a `NewInstruction` with fields:
+- `stmt` = `stmt`
+- `type` = `type`
+- `info` = `CC.NoCallInfo()`
+- `line` = `Int32(1)`
+- `flag` = `flag`
+"""
+function new_inst(@nospecialize(stmt), @nospecialize(type)=Any, flag=CC.IR_FLAG_REFINED)
+    return NewInstruction(stmt, type, CC.NoCallInfo(), Int32(1), flag)
+end
+
+"""
+    const InstVector = Vector{NewInstruction}
+
+Note: the `CC.NewInstruction` type is used to represent instructions because it has the
+correct fields. While it is only used to represent new instrucdtions in `Core.Compiler`, it
+is used to represent all instructions in `BBCode`.
+"""
+const InstVector = Vector{NewInstruction}
 
 """
     ID()
@@ -270,11 +335,9 @@ Base.copy(ir::BBCode) = BBCode(ir, copy(ir.blocks))
 """
     compute_all_successors(ir::BBCode)::Dict{ID, Vector{ID}}
 
-Compute a map from the `ID of each `BBlock` in `ir` to its possible successors.
+Compute a map from the `ID` of each `BBlock` in `ir` to its possible successors.
 """
-function compute_all_successors(ir::BBCode)::Dict{ID,Vector{ID}}
-    return _compute_all_successors(ir.blocks)
-end
+compute_all_successors(ir::BBCode)::Dict{ID,Vector{ID}} = _compute_all_successors(ir.blocks)
 
 """
     _compute_all_successors(blks::Vector{BBlock})::Dict{ID, Vector{ID}}
@@ -283,27 +346,31 @@ Internal method implementing [`compute_all_successors`](@ref). This method is ea
 construct test cases for because it only requires the collection of `BBlocks`, not all of
 the other stuff that goes into a `BBCode`.
 """
-function _compute_all_successors(blks::Vector{BBlock})::Dict{ID,Vector{ID}}
+@noinline function _compute_all_successors(blks::Vector{BBlock})::Dict{ID,Vector{ID}}
     succs = map(enumerate(blks)) do (n, blk)
-        return successors(terminator(blk), n, blks, n == length(blks))
+        is_final_block = n == length(blks)
+        t = terminator(blk)
+        if t === nothing
+            return is_final_block ? ID[] : ID[blks[n + 1].id]
+        elseif t isa IDGotoNode
+            return [t.label]
+        elseif t isa IDGotoIfNot
+            return is_final_block ? ID[t.dest] : ID[t.dest, blks[n + 1].id]
+        elseif t isa ReturnNode
+            return ID[]
+        elseif t isa Switch
+            return vcat(t.dests, t.fallthrough_dest)
+        else
+            error("Unhandled terminator $t")
+        end
     end
-    return Dict{ID,Vector{ID}}(zip(map(b -> b.id, blks), succs))
+    return Dict{ID,Vector{ID}}((b.id, succ) for (b, succ) in zip(blks, succs))
 end
-
-function successors(::Nothing, n::Int, blks::Vector{BBlock}, is_final_block::Bool)
-    return is_final_block ? ID[] : ID[blks[n + 1].id]
-end
-successors(t::IDGotoNode, ::Int, ::Vector{BBlock}, ::Bool) = [t.label]
-function successors(t::IDGotoIfNot, n::Int, blks::Vector{BBlock}, is_final_block::Bool)
-    return is_final_block ? ID[t.dest] : ID[t.dest, blks[n + 1].id]
-end
-successors(::ReturnNode, ::Int, ::Vector{BBlock}, ::Bool) = ID[]
-successors(t::Switch, ::Int, ::Vector{BBlock}, ::Bool) = vcat(t.dests, t.fallthrough_dest)
 
 """
     compute_all_predecessors(ir::BBCode)::Dict{ID, Vector{ID}}
 
-Compute a map from the `ID of each `BBlock` in `ir` to its possible predecessors.
+Compute a map from the `ID` of each `BBlock` in `ir` to its possible predecessors.
 """
 function compute_all_predecessors(ir::BBCode)::Dict{ID,Vector{ID}}
     return _compute_all_predecessors(ir.blocks)
@@ -386,12 +453,59 @@ function _control_flow_graph(blks::Vector{BBlock})::Core.Compiler.CFG
     preds = map(id -> sort(map(p -> id_to_num[p], preds_ids[id])), block_ids)
     succs = map(id -> sort(map(s -> id_to_num[s], succs_ids[id])), block_ids)
 
+    # Predecessor of entry block is `0`. This needs to be added in manually.
+    @static if VERSION >= v"1.11"
+        push!(preds[1], 0)
+    end
+
+    # Compute the statement numbers associated to each basic block.
     index = vcat(0, cumsum(map(length, blks))) .+ 1
     basic_blocks = map(eachindex(blks)) do n
         stmt_range = Core.Compiler.StmtRange(index[n], index[n + 1] - 1)
         return Core.Compiler.BasicBlock(stmt_range, preds[n], succs[n])
     end
     return Core.Compiler.CFG(basic_blocks, index[2:(end - 1)])
+end
+
+"""
+    _instructions_to_blocks(insts::InstVector, cfg::CC.CFG)::InstVector
+
+Pulls out the instructions from `insts`, and calls `__line_numbers_to_block_numbers!`.
+"""
+function _lines_to_blocks(insts::InstVector, cfg::CC.CFG)::InstVector
+    stmts = __line_numbers_to_block_numbers!(Any[x.stmt for x in insts], cfg)
+    return map((inst, stmt) -> NewInstruction(inst; stmt), insts, stmts)
+end
+
+"""
+    __line_numbers_to_block_numbers!(insts::Vector{Any}, cfg::CC.CFG)
+
+Converts any edges in `GotoNode`s, `GotoIfNot`s, `PhiNode`s, and `:enter` expressions which
+refer to line numbers into references to block numbers. The `cfg` provides the information
+required to perform this conversion.
+
+For context, `CodeInfo` objects have references to line numbers, while `IRCode` uses
+block numbers.
+
+This code is copied over directly from the body of `Core.Compiler.inflate_ir!`.
+"""
+function __line_numbers_to_block_numbers!(insts::Vector{Any}, cfg::CC.CFG)
+    for i in eachindex(insts)
+        stmt = insts[i]
+        if isa(stmt, GotoNode)
+            insts[i] = GotoNode(CC.block_for_inst(cfg, stmt.label))
+        elseif isa(stmt, GotoIfNot)
+            insts[i] = GotoIfNot(stmt.cond, CC.block_for_inst(cfg, stmt.dest))
+        elseif isa(stmt, PhiNode)
+            insts[i] = PhiNode(
+                Int32[CC.block_for_inst(cfg, Int(edge)) for edge in stmt.edges], stmt.values
+            )
+        elseif Meta.isexpr(stmt, :enter)
+            stmt.args[1] = CC.block_for_inst(cfg, stmt.args[1]::Int)
+            insts[i] = stmt
+        end
+    end
+    return insts
 end
 
 #
@@ -431,7 +545,8 @@ end
 Convert an `Compiler.InstructionStream` into a list of `Compiler.NewInstruction`s.
 """
 function new_inst_vec(x::CC.InstructionStream)
-    return map((v...,) -> NewInstruction(v...), stmt(x), x.type, x.info, x.line, x.flag)
+    stmt = @static VERSION < v"1.11.0-rc4" ? x.inst : x.stmt
+    return map((v...,) -> NewInstruction(v...), stmt, x.type, x.info, x.line, x.flag)
 end
 
 # Maps from positional names (SSAValues for nodes, Integers for basic blocks) to IDs.
@@ -673,7 +788,7 @@ function _distance_to_entry(blks::Vector{BBlock})::Vector{Int}
 end
 
 """
-    _sort_blocks!(ir::BBCode)::BBCode
+    sort_blocks!(ir::BBCode)::BBCode
 
 Ensure that blocks appear in order of distance-from-entry-point, where distance the
 distance from block b to the entry point is defined to be the minimum number of basic
@@ -687,7 +802,7 @@ WARNING: use with care. Only use if you are confident that arbitrary re-ordering
 blocks in `ir` is valid. Notably, this does not hold if you have any `IDGotoIfNot` nodes in
 `ir`.
 """
-function _sort_blocks!(ir::BBCode)::BBCode
+function sort_blocks!(ir::BBCode)::BBCode
     I = sortperm(_distance_to_entry(ir.blocks))
     ir.blocks .= ir.blocks[I]
     return ir
@@ -764,6 +879,15 @@ function characterise_unique_predecessor_blocks(
 
     return is_unique_pred, pred_is_unique_pred
 end
+
+"""
+    is_reachable_return_node(x::ReturnNode)
+
+Determine whether `x` is a `ReturnNode`, and if it is, if it is also reachable. This is
+purely a function of whether or not its `val` field is defined or not.
+"""
+is_reachable_return_node(x::ReturnNode) = isdefined(x, :val)
+is_reachable_return_node(x) = false
 
 """
     characterise_used_ids(stmts::Vector{IDInstPair})::Dict{ID, Bool}
@@ -882,26 +1006,4 @@ function _remove_unreachable_blocks!(blks::Vector{BBlock})
     return remaining_blks
 end
 
-"""
-    inc_args(stmt)
-
-Increment by `1` the `n` field of any `Argument`s present in `stmt`.
-"""
-inc_args(x::Expr) = Expr(x.head, map(__inc, x.args)...)
-inc_args(x::ReturnNode) = isdefined(x, :val) ? ReturnNode(__inc(x.val)) : x
-inc_args(x::IDGotoIfNot) = IDGotoIfNot(__inc(x.cond), x.dest)
-inc_args(x::IDGotoNode) = x
-function inc_args(x::IDPhiNode)
-    new_values = Vector{Any}(undef, length(x.values))
-    for n in eachindex(x.values)
-        if isassigned(x.values, n)
-            new_values[n] = __inc(x.values[n])
-        end
-    end
-    return IDPhiNode(x.edges, new_values)
 end
-inc_args(::Nothing) = nothing
-inc_args(x::GlobalRef) = x
-
-__inc(x::Argument) = Argument(x.n + 1)
-__inc(x) = x

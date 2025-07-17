@@ -1,6 +1,11 @@
 @testset "tangents" begin
     @testset "$(tangent_type(primal_type))" for (primal_type, expected_tangent_type) in Any[
 
+        ## Misc. Specific Types
+        (Cstring, NoTangent),
+        (Cwstring, NoTangent),
+        (Union{}, Union{}),
+
         ## Tuples
 
         # Unions of Tuples.
@@ -66,8 +71,8 @@
             @NamedTuple{a::Float64, b::T} where {T<:Int},
             Union{NoTangent,NamedTuple{(:a, :b)}},
         ),
-        (Union{@NamedTuple{a::T},@NamedTuple{b::T, c::T}} where {T<:Any}, Any),
-        (Union{@NamedTuple{T, Float64},@NamedTuple{T, Float64, Int}} where {T}, Any),
+        (Union{@NamedTuple{a::T},@NamedTuple{b::T,c::T}} where {T<:Any}, Any),
+        (Union{@NamedTuple{T,Float64},@NamedTuple{T,Float64,Int}} where {T}, Any),
 
         # Edge case
         (@NamedTuple{}, NoTangent),
@@ -90,9 +95,8 @@
         TestUtils.test_tangent_type(primal_type, expected_tangent_type)
     end
 
-    @testset "$(typeof(data))" for (interface_only, data...) in
-                                   Mooncake.tangent_test_cases()
-        test_tangent(Xoshiro(123456), data...; interface_only)
+    @testset "$(typeof(p))" for (interface_only, p, t...) in Mooncake.tangent_test_cases()
+        test_tangent(Xoshiro(123456), p, t...; interface_only)
     end
 
     tangent(nt::NamedTuple) = Tangent(map(PossiblyUninitTangent, nt))
@@ -119,6 +123,9 @@
 
             # Homogeneous type optimisation.
             @test @inferred(increment_field!!((5.0, 4.0), 3.0, 2)) == (5.0, 7.0)
+
+            # Homogeneous type optimisations scales to large `Tuple`s.
+            @inferred(increment_field!!(Tuple(zeros(1_000)), 5.0, 3))
         end
         @testset "NamedTuple" begin
             nt = NoTangent()

@@ -32,13 +32,13 @@ Equivalent to `CoDual(x, uninit_tangent(x))`.
 uninit_codual(x) = CoDual(x, uninit_tangent(x))
 
 function _codual_internal(::Type{P}, f::F, extractor::E) where {P,F,E}
-    P == Union{} && return CoDual
+    P == Union{} && return Union{}
     P == DataType && return CoDual
     P isa Union && return Union{f(P.a),f(P.b)}
 
     if P <: Tuple && !all(isconcretetype, (P.parameters...,))
         field_types = (P.parameters...,)
-        union_fields = _findall(Base.Fix2(isa, Union), 1, field_types)
+        union_fields = _findall(Base.Fix2(isa, Union), field_types)
         if length(union_fields) == 1 &&
             all(p -> p isa Union || isconcretetype(p), field_types)
             P_split = split_union_tuple_type(field_types)
@@ -57,7 +57,7 @@ The type of the `CoDual` which contains instances of `P` and associated tangents
 """
 codual_type(::Type{P}) where {P} = _codual_internal(P, codual_type, tangent_type)
 
-function codual_type(p::Type{Type{P}}) where {P}
+@unstable function codual_type(p::Type{Type{P}}) where {P}
     return @isdefined(P) ? CoDual{Type{P},NoTangent} : CoDual{_typeof(p),NoTangent}
 end
 
@@ -70,7 +70,7 @@ function fcodual_type(::Type{P}) where {P}
     return _codual_internal(P, fcodual_type, P -> fdata_type(tangent_type(P)))
 end
 
-function fcodual_type(p::Type{Type{P}}) where {P}
+@unstable function fcodual_type(p::Type{Type{P}}) where {P}
     return @isdefined(P) ? CoDual{Type{P},NoFData} : CoDual{_typeof(p),NoFData}
 end
 

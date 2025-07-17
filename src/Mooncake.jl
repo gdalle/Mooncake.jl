@@ -3,15 +3,7 @@ module Mooncake
 const CC = Core.Compiler
 
 using ADTypes,
-    ChainRules,
-    DiffRules,
-    ExprTools,
-    Graphs,
-    InteractiveUtils,
-    LinearAlgebra,
-    MistyClosures,
-    Random,
-    Setfield
+    ChainRules, DiffRules, ExprTools, InteractiveUtils, LinearAlgebra, MistyClosures, Random
 
 # There are many clashing names, so we will always qualify uses of names from CRC.
 import ChainRulesCore as CRC
@@ -43,9 +35,10 @@ using Core:
     compilerbarrier
 using Core.Compiler: IRCode, NewInstruction
 using Core.Intrinsics: pointerref, pointerset
-using LinearAlgebra.BLAS: @blasfunc, BlasInt, trsm!
+using LinearAlgebra.BLAS: @blasfunc, BlasInt, trsm!, BlasFloat
 using LinearAlgebra.LAPACK: getrf!, getrs!, getri!, trtrs!, potrf!, potrs!
 using FunctionWrappers: FunctionWrapper
+using DispatchDoctor: @stable, @unstable
 
 # Needs to be defined before various other things.
 function _foreigncall_ end
@@ -98,6 +91,8 @@ programming (e.g. via `@generated` functions) more generally.
 """
 build_primitive_rrule(::Type{<:Tuple}) = rrule!!
 
+#! format: off
+@stable default_mode = "disable" default_union_limit = 2 begin
 include("utils.jl")
 include("tangents.jl")
 include("fwds_rvs_data.jl")
@@ -105,21 +100,27 @@ include("codual.jl")
 include("debug_mode.jl")
 include("stack.jl")
 
+@unstable begin
+include(joinpath("interpreter", "bbcode.jl"))
+using .BasicBlockCode
+
 include(joinpath("interpreter", "contexts.jl"))
 include(joinpath("interpreter", "abstract_interpretation.jl"))
+include(joinpath("interpreter", "patch_for_319.jl"))
 include(joinpath("interpreter", "ir_utils.jl"))
-include(joinpath("interpreter", "bbcode.jl"))
 include(joinpath("interpreter", "ir_normalisation.jl"))
 include(joinpath("interpreter", "zero_like_rdata.jl"))
 include(joinpath("interpreter", "s2s_reverse_mode_ad.jl"))
+end
 
 include("tools_for_rules.jl")
-include("test_utils.jl")
-include("test_resources.jl")
+@unstable include("test_utils.jl")
+@unstable include("test_resources.jl")
 
 include(joinpath("rrules", "avoiding_non_differentiable_code.jl"))
 include(joinpath("rrules", "blas.jl"))
 include(joinpath("rrules", "builtins.jl"))
+include(joinpath("rrules", "dispatch_doctor.jl"))
 include(joinpath("rrules", "fastmath.jl"))
 include(joinpath("rrules", "foreigncall.jl"))
 include(joinpath("rrules", "function_wrappers.jl"))
@@ -129,6 +130,7 @@ include(joinpath("rrules", "linear_algebra.jl"))
 include(joinpath("rrules", "low_level_maths.jl"))
 include(joinpath("rrules", "misc.jl"))
 include(joinpath("rrules", "new.jl"))
+include(joinpath("rrules", "random.jl"))
 include(joinpath("rrules", "tasks.jl"))
 include(joinpath("rrules", "twice_precision.jl"))
 @static if VERSION >= v"1.11-rc4"
@@ -136,38 +138,20 @@ include(joinpath("rrules", "twice_precision.jl"))
 else
     include(joinpath("rrules", "array_legacy.jl"))
 end
+include(joinpath("rrules", "performance_patches.jl"))
 
 include("interface.jl")
 include("config.jl")
 include("developer_tools.jl")
 
-export primal,
-    tangent,
-    randn_tangent,
-    increment!!,
-    NoTangent,
-    Tangent,
-    MutableTangent,
-    PossiblyUninitTangent,
-    set_to_zero!!,
-    tangent_type,
-    zero_tangent,
-    _scale,
-    _add_to_primal,
-    _diff,
-    _dot,
-    zero_codual,
-    codual_type,
-    rrule!!,
-    build_rrule,
-    value_and_gradient!!,
-    value_and_pullback!!,
-    NoFData,
-    NoRData,
-    fdata_type,
-    rdata_type,
-    fdata,
-    rdata,
-    get_interpreter
+# Public, not exported
+include("public.jl")
+end
+#! format: on
+
+@public Config, value_and_pullback!!, prepare_pullback_cache
+
+# Public, exported
+export value_and_gradient!!, prepare_gradient_cache
 
 end

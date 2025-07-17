@@ -1,9 +1,18 @@
 module FwdsRvsDataTestResources
 struct Foo{A} end
+struct Bar{A,B,C}
+    a::A
+    b::B
+    c::C
+end
+struct SV{S<:Tuple,T,L}
+    data::NTuple{L,T}
+end
 end
 
 @testset "fwds_rvs_data" begin
     @testset "fdata_type / rdata_type($P)" for (P, F, R) in Any[
+        (Union{}, Union{}, Union{}),
         (
             Tuple{Any,Vector{Float64}},
             Tuple{Any,Vector{Float64}},
@@ -15,10 +24,27 @@ end
         @test rdata_type(tangent_type(P)) == R
     end
     @testset "$(typeof(p))" for (_, p, _...) in Mooncake.tangent_test_cases()
-        TestUtils.test_fwds_rvs_data(Xoshiro(123456), p)
+        TestUtils.test_tangent_splitting(Xoshiro(123456), p)
     end
+    @testset "Test for unions involving `Nothing`" begin
+        # https://github.com/chalk-lab/Mooncake.jl/issues/597 for the reason.
+        TestUtils.test_tangent_splitting(
+            Xoshiro(123456), TestResources.make_P_union_nothing(); test_opt_flag=false
+        )
+        # https://github.com/chalk-lab/Mooncake.jl/issues/598
+        TestUtils.test_tangent_splitting(
+            Xoshiro(123456), TestResources.make_P_union_array(); test_opt_flag=false
+        )
+
+        # https://github.com/chalk-lab/Mooncake.jl/issues/631
+        TestUtils.test_tangent_splitting(
+            Xoshiro(123456), TestResources.P_adam_like_union; test_opt_flag=false
+        )
+    end
+
     @testset "zero_rdata_from_type checks" begin
         @test can_produce_zero_rdata_from_type(Vector) == true
+        check_allocs(can_produce_zero_rdata_from_type, Vector)
         @test zero_rdata_from_type(Vector) == NoRData()
         @test !can_produce_zero_rdata_from_type(FwdsRvsDataTestResources.Foo)
         @test can_produce_zero_rdata_from_type(Tuple{Float64,Type{Float64}})
@@ -47,6 +73,18 @@ end
         # Check for ambiguity.
         @test Mooncake.can_produce_zero_rdata_from_type(Union{})
         @test Mooncake.zero_rdata_from_type(Union{}) === NoRData()
+
+        # Performance.
+        @testset "$P" for P in Any[
+            Vector{Vector{Vector{Vector{Float64}}}},
+            Vector{Vector{Vector{NTuple{11,Float64}}}},
+            FwdsRvsDataTestResources.Bar{Float64,Float64,Float64},
+            FwdsRvsDataTestResources.Bar{
+                FwdsRvsDataTestResources.SV{Tuple{1},Float64,1},Float64,Float64
+            },
+        ]
+            @test TestUtils.is_foldable(can_produce_zero_rdata_from_type, Tuple{Type{P}})
+        end
     end
     @testset "lazy construction checks" begin
         # Check that lazy construction is in fact lazy for some cases where performance
@@ -101,7 +139,7 @@ end
     end
 
     # Tests that the static type of an fdata / rdata is correct happen in
-    # test_fwds_rvs_data, so here we only need to test the specific quirks for a given type.
+    # test_tangent_splitting, so here we only need to test the specific quirks for a given type.
     @testset "fdata and rdata verification" begin
         @testset "Array" begin
             @test_throws InvalidFDataException verify_fdata_value(randn(10), randn(11))

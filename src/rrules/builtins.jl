@@ -28,7 +28,7 @@ function rrule!!(f::CoDual{<:Core.Builtin}, args...)
             "to avoid hitting this built-in function, or implement a method of `rrule!!` " *
             "which is specialised to this case. " *
             "Either way, please consider commenting on " *
-            "https://github.com/compintell/Mooncake.jl/issues/208/ so that the issue can be " *
+            "https://github.com/chalk-lab/Mooncake.jl/issues/208/ so that the issue can be " *
             "fixed more widely.\n" *
             "For reproducibility, note that the full signature is:\n" *
             "$(typeof((f, args...)))",
@@ -80,7 +80,7 @@ Instead, we map each `Core.IntrinsicFunction` to one of the regular Julia functi
 It is possible that owing to improvements in constant propagation in the Julia compiler in
 version 1.10, we actually _could_ get away with just writing a single method of `rrule!!` to
 handle all intrinsics, so this dispatch-based mechanism might be unnecessary. Someone should
-investigate this. Discussed at https://github.com/compintell/Mooncake.jl/issues/387 .
+investigate this. Discussed at https://github.com/chalk-lab/Mooncake.jl/issues/387 .
 """
 module IntrinsicsWrappers
 
@@ -118,7 +118,7 @@ end
 function translate(f)
     msg =
         "Unable to translate the intrinsic $f into a regular Julia function. " *
-        "Please see github.com/compintell/Mooncake.jl/issues/208 for more discussion."
+        "Please see github.com/chalk-lab/Mooncake.jl/issues/208 for more discussion."
     throw(MissingIntrinsicWrapperException(msg))
 end
 
@@ -219,6 +219,14 @@ function rrule!!(f::CoDual{typeof(bitcast)}, t::CoDual{Type{T}}, x) where {T}
     v = bitcast(T, _x)
     if T <: Ptr && _x isa Ptr
         dv = bitcast(Ptr{tangent_type(eltype(T))}, tangent(x))
+    elseif T <: Ptr && _x isa Union{Int,UInt}
+        int2ptr_err_msg =
+            "It is not permissible to bitcast to an Int/UInt type to a Ptr type during AD, as " *
+            "this risks giving the wrong answer, or causing Julia to segfault. " *
+            "If this call to bitcast appears as part of the implementation of a " *
+            "differentiable function, you should write a rule for this function, or modify " *
+            "its implementation to avoid the bitcast."
+        throw(ArgumentError(int2ptr_err_msg))
     else
         dv = NoFData()
     end
@@ -651,11 +659,7 @@ function rrule!!(
     end
 end
 
-@static if VERSION >= v"1.11"
-    is_homogeneous_and_immutable(::P) where {P<:Tuple} = allequal(fieldtypes(P))
-else
-    @generated is_homogeneous_and_immutable(::P) where {P<:Tuple} = allequal(fieldtypes(P))
-end
+@generated is_homogeneous_and_immutable(::P) where {P<:Tuple} = allequal(fieldtypes(P))
 
 @inline is_homogeneous_and_immutable(p::NamedTuple) = is_homogeneous_and_immutable(Tuple(p))
 is_homogeneous_and_immutable(::Any) = false
@@ -691,7 +695,8 @@ function rrule!!(::CoDual{typeof(setfield!)}, value::CoDual, name::CoDual, x::Co
 end
 
 # swapfield!
-# throw
+
+rrule!!(::CoDual{typeof(throw)}, args::CoDual...) = throw(map(primal, args)...)
 
 struct TuplePullback{N} end
 
@@ -1013,7 +1018,6 @@ function generate_hand_written_rrule!!_test_cases(rng_ctor, ::Val{:builtins})
         (false, :none, _range, setfield!, NonDifferentiableFoo(5, false), 1, 4),
         (false, :none, _range, setfield!, NonDifferentiableFoo(5, true), 2, false),
         # swapfield! -- NEEDS IMPLEMENTING AND TESTING
-        # throw -- NEEDS IMPLEMENTING AND TESTING
         (false, :stability_and_allocs, nothing, tuple, 5.0, 4.0),
         (false, :stability_and_allocs, nothing, tuple, randn(5), 5.0),
         (false, :stability_and_allocs, nothing, tuple, randn(5), randn(4)),

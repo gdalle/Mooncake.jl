@@ -1,4 +1,3 @@
-
 """
     module TestResources
 
@@ -18,9 +17,11 @@ using ..Mooncake:
     ircode,
     @is_primitive,
     MinimalCtx,
-    val
+    val,
+    primal,
+    tangent
 
-using DiffTests, LinearAlgebra, Random, Setfield
+using LinearAlgebra, Random
 
 #
 # Types used for testing purposes
@@ -121,6 +122,80 @@ end
 
 struct StructNoRvs
     x::Vector{Float64}
+end
+
+struct FiveFields{A,B,C,D,E}
+    a::A
+    b::B
+    c::C
+    d::D
+    e::E
+end
+
+struct FourFields{A,B,C,D}
+    a::A
+    b::B
+    c::C
+    d::D
+end
+
+struct OneField{A}
+    a::A
+end
+
+# Test for unions involving `Nothing`. See, 
+# https://github.com/chalk-lab/Mooncake.jl/issues/597 for the reason.
+struct P_union_nothing_float{T<:Base.IEEEFloat}
+    x::Union{T,Nothing}
+    x2::Union{T,Nothing}
+    y::T
+    z::Union{Array{T,1},Nothing}
+    z2::Union{Array{T,1},Nothing}
+    w::Union{Array{T,2},Nothing}
+    w2::Union{Array{T,2},Nothing}
+end
+function make_P_union_nothing(T=Float32)
+    return P_union_nothing_float{T}(
+        T(1.0),
+        nothing,
+        T(1.0),
+        randn(Xoshiro(1), T, 2),
+        nothing,
+        randn(Xoshiro(1), T, 2, 2),
+        nothing,
+    )
+end
+
+# https://github.com/chalk-lab/Mooncake.jl/issues/598
+struct P_union_nothing_array{T}
+    w::T
+    w2::Union{Vector{Tuple{Int,Int,Vector{Tuple{Int,Int}}}},Nothing}
+end
+function make_P_union_array(T=Float32)
+    return P_union_nothing_array{T}(T(1.0), nothing)
+end
+
+# https://github.com/chalk-lab/Mooncake.jl/issues/631
+struct P_adam_like
+    alphas::Vector{Float64}
+    values::Vector{Float64}
+    slopes::Vector{Float64}
+end
+const P_adam_like_union = Union{Nothing,P_adam_like}
+
+function build_big_isbits_struct()
+    return FourFields(
+        FiveFields(
+            FourFields(OneField(5.0), OneField(5.0), OneField(3), OneField(nothing)),
+            OneField(4),
+            OneField(3.0),
+            OneField(nothing),
+            OneField(false),
+        ),
+        OneField(5.0),
+        OneField(nothing),
+        OneField(4),
+    )
 end
 
 #
@@ -241,7 +316,7 @@ const __x_for_gref_tester_4::Float64 = 3.0
 __x_for_gref_tester_5 = 5.0
 @eval globalref_tester_5() = $(GlobalRef(@__MODULE__, :__x_for_gref_tester_5))
 
-# See https://github.com/compintell/Mooncake.jl/issues/329 .
+# See https://github.com/chalk-lab/Mooncake.jl/issues/329 .
 const __x = randn(10)
 @noinline globalref_tester_6_inner(x) = sum(x)
 globalref_tester_6() = globalref_tester_6_inner(__x)
@@ -604,8 +679,18 @@ end
 
 highly_nested_tuple(x) = ((((x,),), x), x)
 
-# Regression test: https://github.com/compintell/Mooncake.jl/issues/450
+# Regression test: https://github.com/chalk-lab/Mooncake.jl/issues/450
 sig_argcount_mismatch(x) = vcat(x[1], x[2:2], x[3:3], x[4:4])
+
+# Regression test: https://github.com/chalk-lab/Mooncake.jl/issues/473
+large_tuple_inference(x::NTuple{1_000,Float64}) = sum(cos, x)
+
+# Regression test: https://github.com/chalk-lab/Mooncake.jl/issues/319
+function regression_319(θ)
+    d = [0.0, 0.0]
+    x = θ[1:2]
+    return d
+end
 
 function generate_test_functions()
     return Any[
@@ -834,6 +919,8 @@ function generate_test_functions()
         (false, :allocs, nothing, inplace_invoke!, randn(1_024)),
         (false, :allocs, nothing, highly_nested_tuple, 5.0),
         (false, :none, nothing, sig_argcount_mismatch, ones(4)),
+        (false, :allocs, (lb=2, ub=1500), large_tuple_inference, Tuple(zeros(1_000))),
+        (false, :none, nothing, regression_319, randn(3)),
     ]
 end
 
@@ -881,10 +968,7 @@ end
 
 my_setfield!(args...) = setfield!(args...)
 
-function _setfield!(value::MutableTangent, name, x)
-    @set value.fields.$name = x
-    return x
-end
+_setfield!(value::MutableTangent, name, x) = x
 
 function Mooncake.rrule!!(::Mooncake.CoDual{typeof(my_setfield!)}, value, name, x)
     _name = primal(name)
@@ -894,72 +978,6 @@ function Mooncake.rrule!!(::Mooncake.CoDual{typeof(my_setfield!)}, value, name, 
     )
     return y, nothing
 end
-
-# Tests brought in from DiffTests.jl
-const _rng = Xoshiro(123456)
-
-const DIFFTESTS_FUNCTIONS = vcat(
-    tuple.(
-        fill(false, length(DiffTests.NUMBER_TO_NUMBER_FUNCS)),
-        DiffTests.NUMBER_TO_NUMBER_FUNCS,
-        rand(_rng, length(DiffTests.NUMBER_TO_NUMBER_FUNCS)) .+ 1e-1,
-    ),
-    tuple.(
-        fill(false, length(DiffTests.NUMBER_TO_ARRAY_FUNCS)),
-        DiffTests.NUMBER_TO_ARRAY_FUNCS,
-        [rand(_rng) + 1e-1 for _ in DiffTests.NUMBER_TO_ARRAY_FUNCS],
-    ),
-    tuple.(
-        fill(false, length(DiffTests.INPLACE_NUMBER_TO_ARRAY_FUNCS)),
-        DiffTests.INPLACE_NUMBER_TO_ARRAY_FUNCS,
-        [rand(_rng, 5) .+ 1e-1 for _ in DiffTests.INPLACE_ARRAY_TO_ARRAY_FUNCS],
-        [rand(_rng) + 1e-1 for _ in DiffTests.INPLACE_ARRAY_TO_ARRAY_FUNCS],
-    ),
-    tuple.(
-        fill(false, length(DiffTests.VECTOR_TO_NUMBER_FUNCS)),
-        DiffTests.VECTOR_TO_NUMBER_FUNCS,
-        [rand(_rng, 5) .+ 1e-1 for _ in DiffTests.VECTOR_TO_NUMBER_FUNCS],
-    ),
-    tuple.(
-        fill(false, length(DiffTests.MATRIX_TO_NUMBER_FUNCS)),
-        DiffTests.MATRIX_TO_NUMBER_FUNCS,
-        [rand(_rng, 5, 5) .+ 1e-1 for _ in DiffTests.MATRIX_TO_NUMBER_FUNCS],
-    ),
-    tuple.(
-        fill(false, length(DiffTests.BINARY_MATRIX_TO_MATRIX_FUNCS)),
-        DiffTests.BINARY_MATRIX_TO_MATRIX_FUNCS,
-        [rand(_rng, 5, 5) .+ 1e-1 + I for _ in DiffTests.BINARY_MATRIX_TO_MATRIX_FUNCS],
-        [rand(_rng, 5, 5) .+ 1e-1 + I for _ in DiffTests.BINARY_MATRIX_TO_MATRIX_FUNCS],
-    ),
-    tuple.(
-        fill(false, length(DiffTests.TERNARY_MATRIX_TO_NUMBER_FUNCS)),
-        DiffTests.TERNARY_MATRIX_TO_NUMBER_FUNCS,
-        [rand(_rng, 5, 5) .+ 1e-1 for _ in DiffTests.TERNARY_MATRIX_TO_NUMBER_FUNCS],
-        [rand(_rng, 5, 5) .+ 1e-1 for _ in DiffTests.TERNARY_MATRIX_TO_NUMBER_FUNCS],
-        [rand(_rng, 5, 5) .+ 1e-1 for _ in DiffTests.TERNARY_MATRIX_TO_NUMBER_FUNCS],
-    ),
-    tuple.(
-        fill(false, length(DiffTests.INPLACE_ARRAY_TO_ARRAY_FUNCS)),
-        DiffTests.INPLACE_ARRAY_TO_ARRAY_FUNCS,
-        [rand(_rng, 26) .+ 1e-1 for _ in DiffTests.INPLACE_ARRAY_TO_ARRAY_FUNCS],
-        [rand(_rng, 26) .+ 1e-1 for _ in DiffTests.INPLACE_ARRAY_TO_ARRAY_FUNCS],
-    ),
-    tuple.(
-        fill(false, length(DiffTests.VECTOR_TO_VECTOR_FUNCS)),
-        DiffTests.VECTOR_TO_VECTOR_FUNCS,
-        [rand(_rng, 26) .+ 1e-1 for _ in DiffTests.VECTOR_TO_VECTOR_FUNCS],
-    ),
-    tuple.(
-        fill(false, length(DiffTests.ARRAY_TO_ARRAY_FUNCS)),
-        DiffTests.ARRAY_TO_ARRAY_FUNCS,
-        [rand(_rng, 26) .+ 1e-1 for _ in DiffTests.ARRAY_TO_ARRAY_FUNCS],
-    ),
-    tuple.(
-        fill(false, length(DiffTests.MATRIX_TO_MATRIX_FUNCS)),
-        DiffTests.MATRIX_TO_MATRIX_FUNCS,
-        [rand(_rng, 5, 5) .+ 1e-1 for _ in DiffTests.MATRIX_TO_MATRIX_FUNCS],
-    ),
-)
 
 export MutableFoo, StructFoo, NonDifferentiableFoo, FullyInitMutableStruct
 

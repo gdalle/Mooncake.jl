@@ -258,7 +258,7 @@ initial rdata directly into the statement, which is safe because it is always a 
 """
 function reverse_data_ref_stmts(info::ADInfo)
     function make_ref_stmt(id, P)
-        ref_type = Base.RefValue{P <: Type ? NoRData : zero_like_rdata_type(P)}
+        ref_type = Base.RefValue{P<:Type ? NoRData : zero_like_rdata_type(P)}
         init_ref_val = P <: Type ? NoRData() : Mooncake.zero_like_rdata_from_type(P)
         return (id, new_inst(Expr(:new, ref_type, QuoteNode(init_ref_val))))
     end
@@ -352,6 +352,31 @@ function comms_channel(info::ADStmtInfo)
     info.comms_id === nothing && return nothing
     return only(filter(x -> x[1] == info.comms_id, info.fwds))
 end
+
+"""
+    inc_args(stmt)
+
+Increment by `1` the `n` field of any `Argument`s present in `stmt`.
+Used in `make_ad_stmts!`.
+"""
+inc_args(x::Expr) = Expr(x.head, map(__inc, x.args)...)
+inc_args(x::ReturnNode) = isdefined(x, :val) ? ReturnNode(__inc(x.val)) : x
+inc_args(x::IDGotoIfNot) = IDGotoIfNot(__inc(x.cond), x.dest)
+inc_args(x::IDGotoNode) = x
+function inc_args(x::IDPhiNode)
+    new_values = Vector{Any}(undef, length(x.values))
+    for n in eachindex(x.values)
+        if isassigned(x.values, n)
+            new_values[n] = __inc(x.values[n])
+        end
+    end
+    return IDPhiNode(x.edges, new_values)
+end
+inc_args(::Nothing) = nothing
+inc_args(x::GlobalRef) = x
+
+__inc(x::Argument) = Argument(x.n + 1)
+__inc(x) = x
 
 """
     make_ad_stmts!(inst::NewInstruction, line::ID, info::ADInfo)::ADStmtInfo
@@ -609,7 +634,7 @@ function make_ad_stmts!(stmt::Core.UpsilonNode, ::ID, ::ADInfo)
         "re-writing code such that it avoids generating any UpsilonNodes, or writing a " *
         "rule to differentiate the code by hand. If you are in any doubt as to what to " *
         "do, please request assistance by opening an issue at " *
-        "github.com/compintell/Mooncake.jl.",
+        "github.com/chalk-lab/Mooncake.jl.",
     )
 end
 
@@ -674,9 +699,12 @@ function make_ad_stmts!(stmt::Expr, line::ID, info::ADInfo)
         #
 
         # Make arguments to rrule call. Things which are not already CoDual must be made so.
-        codual_arg_ids = map(_ -> ID(), collect(args))
-        codual_args = map(args, codual_arg_ids) do arg, id
-            return (id, new_inst(inc_or_const_stmt(arg, info)))
+        codual_args = IDInstPair[]
+        codual_arg_ids = map(args) do arg
+            is_active(arg) && return __inc(arg)
+            id = ID()
+            push!(codual_args, (id, new_inst(inc_or_const_stmt(arg, info))))
+            return id
         end
 
         # Make call to rule.
@@ -992,7 +1020,7 @@ function Base.showerror(io::IO, err::MooncakeRuleCompilationError)
         "MooncakeRuleCompilationError: an error occured while Mooncake was compiling a " *
         "rule to differentiate something. If the `caused by` error " *
         "message below does not make it clear to you how the problem can be fixed, " *
-        "please open an issue at github.com/compintell/Mooncake.jl describing your " *
+        "please open an issue at github.com/chalk-lab/Mooncake.jl describing your " *
         "problem.\n" *
         "To replicate this error run the following:\n"
     println(io, msg)
@@ -1008,21 +1036,22 @@ function Base.showerror(io::IO, err::MooncakeRuleCompilationError)
 end
 
 """
-    build_rrule(args...; debug_mode=false)
+    build_rrule(args...; kwargs...)
 
-Helper method. Only uses static information from `args`.
+Helper method: equivalent to extracting the signature from `args` and calling
+`build_rrule(sig; kwargs...)`.
 """
-function build_rrule(args...; debug_mode=false)
+function build_rrule(args...; kwargs...)
     interp = get_interpreter()
-    return build_rrule(interp, _typeof(TestUtils.__get_primals(args)); debug_mode)
+    return build_rrule(interp, _typeof(TestUtils.__get_primals(args)); kwargs...)
 end
 
 """
-    build_rrule(sig::Type{<:Tuple})
+    build_rrule(sig::Type{<:Tuple}; kwargs...)
 
-Equivalent to `build_rrule(Mooncake.get_interpreter(), sig)`.
+Helper method: Equivalent to `build_rrule(Mooncake.get_interpreter(), sig; kwargs...)`.
 """
-build_rrule(sig::Type{<:Tuple}) = build_rrule(get_interpreter(), sig)
+build_rrule(sig::Type{<:Tuple}; kwargs...) = build_rrule(get_interpreter(), sig; kwargs...)
 
 const MOONCAKE_INFERENCE_LOCK = ReentrantLock()
 
@@ -1348,10 +1377,6 @@ Produce the IR associated to the `OpaqueClosure` which runs most of the pullback
 function pullback_ir(
     ir::BBCode, Tret, ad_stmts_blocks::ADStmts, pb_comms_insts, info::ADInfo, Tshared_data
 )
-
-    # Compute the argument types associated to the reverse-pass.
-    arg_types = vcat(Tshared_data, rdata_type(tangent_type(Tret)))
-
     # Compute the blocks which return in the primal.
     primal_exit_blocks_inds = findall(is_reachable_return_node ∘ terminator, ir.blocks)
 
@@ -1364,12 +1389,15 @@ function pullback_ir(
     # won't succeed on the forwards-pass. As such, the reverse-pass can just be a no-op.
     if isempty(primal_exit_blocks_inds)
         blocks = [BBlock(ID(), [(ID(), new_inst(ReturnNode(nothing)))])]
-        return BBCode(blocks, arg_types, ir.sptypes, ir.linetable, ir.meta)
+        return BBCode(blocks, Any[Any], ir.sptypes, ir.linetable, ir.meta)
     end
 
     #
     # Standard path pullback generation -- applies to 99% of primals:
     #
+
+    # Compute the argument types associated to the reverse-pass.
+    arg_types = vcat(Tshared_data, rdata_type(tangent_type(Tret)))
 
     # Create entry block which:
     # 1. extracts items from shared data to the correct IDs,
@@ -1488,7 +1516,7 @@ function pullback_ir(
     # avoid annoying the Julia compiler.
     blks = vcat(entry_block, main_blocks, exit_block)
     pb_ir = BBCode(blks, arg_types, ir.sptypes, ir.linetable, ir.meta)
-    return remove_unreachable_blocks!(_sort_blocks!(pb_ir))
+    return remove_unreachable_blocks!(sort_blocks!(pb_ir))
 end
 
 """
@@ -1779,7 +1807,7 @@ mutable struct LazyDerivedRule{primal_sig,Trule}
     rule::Trule
     function LazyDerivedRule(mi::Core.MethodInstance, debug_mode::Bool)
         interp = get_interpreter()
-        return new{mi.specTypes,rule_type(interp, mi; debug_mode)}(debug_mode, mi)
+        return new{mi.specTypes,rule_type(interp, mi;debug_mode)}(debug_mode, mi)
     end
     function LazyDerivedRule{Tprimal_sig,Trule}(
         mi::Core.MethodInstance, debug_mode::Bool
@@ -1820,7 +1848,8 @@ function rule_type(interp::MooncakeInterpreter{C}, sig_or_mi; debug_mode) where 
     sig = Tuple{arg_types...}
     fwd_args_type = Tuple{map(fcodual_type, arg_types)...}
     fwd_return_type = forwards_ret_type(ir)
-    pb_args_type = Tuple{rdata_type(tangent_type(Treturn))}
+    Trdata_return = rdata_type(tangent_type(Treturn))
+    pb_args_type = Trdata_return === Union{} ? Union{} : Tuple{Trdata_return}
     pb_return_type = pullback_ret_type(ir)
     nargs = Val{length(ir.argtypes)}
 
