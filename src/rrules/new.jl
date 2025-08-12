@@ -1,5 +1,16 @@
 @is_primitive MinimalCtx Tuple{typeof(_new_),Vararg}
 
+function frule!!(f::Dual{typeof(_new_)}, p::Dual{Type{P}}, x::Vararg{Dual,N}) where {P,N}
+    y = _new_(P, tuple_map(primal, x)...)
+    T = tangent_type(P)
+    dy = if T == NoTangent
+        NoTangent()
+    else
+        build_output_tangent(P, tuple_map(primal, x), tuple_map(tangent, x))
+    end
+    return Dual(y, dy)
+end
+
 function rrule!!(
     f::CoDual{typeof(_new_)}, p::CoDual{Type{P}}, x::Vararg{CoDual,N}
 ) where {P,N}
@@ -33,12 +44,28 @@ function rrule!!(
     return CoDual(y, dy), pb!!
 end
 
+@generated function build_output_tangent(::Type{P}, x::Tuple, t::Tuple) where {P}
+    names = fieldnames(P)
+    tangent_exprs = map(eachindex(names)) do n
+        F = tangent_field_types(P)[n]
+        if n <= length(t.parameters)
+            data_expr = Expr(:call, __get_data, P, :x, :t, n)
+            return F <: PossiblyUninitTangent ? Expr(:call, F, data_expr) : data_expr
+        else
+            return :($F())
+        end
+    end
+    T_out = tangent_type(P)
+    return :($T_out(NamedTuple{$names}($(Expr(:call, tuple, tangent_exprs...)))))
+end
+
 @inline function build_fdata(::Type{P}, x::Tuple, fdata::Tuple) where {P}
     return _build_fdata_cartesian(P, x, fdata, Val(fieldcount(P)), Val(fieldnames(P)))
 end
 @generated function _build_fdata_cartesian(
-    ::Type{P}, x::Tuple, fdata::Tuple{Vararg{Any,N}}, ::Val{nfield}, ::Val{names}
-) where {P,N,nfield,names}
+    ::Type{P}, x::Tuple, fdata::Tfdata, ::Val{nfield}, ::Val{names}
+) where {P,nfield,names,Tfdata<:Tuple}
+    N = length(Tfdata.parameters)
     quote
         processed_fdata = Base.Cartesian.@ntuple(
             $nfield, n -> let
