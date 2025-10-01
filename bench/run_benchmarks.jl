@@ -118,7 +118,7 @@ end
 
 function build_dynamicppl_problem()
     rng = Xoshiro(123)
-    model = broadcast_demo(rand(LogNormal(1.5, 0.5), 100_000))
+    model = broadcast_demo(rand(rng, LogNormal(1.5, 0.5), 100_000))
     vi = DynamicPPL.SimpleVarInfo(model)
     vi_linked = DynamicPPL.link(vi, model)
     ldp = DynamicPPL.LogDensityFunction(model, DynamicPPL.getlogjoint_internal, vi_linked)
@@ -131,11 +131,6 @@ run_dynamicppl_problem(f::F, x::X) where {F,X} = f(x)
 
 function should_run_benchmark(
     ::Val{:zygote}, ::Base.Fix1{<:typeof(DynamicPPL.LogDensityProblems.logdensity)}, x...
-)
-    return false
-end
-function should_run_benchmark(
-    ::Val{:enzyme}, ::Base.Fix1{<:typeof(DynamicPPL.LogDensityProblems.logdensity)}, x...
 )
     return false
 end
@@ -261,13 +256,20 @@ function benchmark_rules!!(
 
                 if should_run_benchmark(Val(:enzyme), args...)
                     @info "Enzyme"
-                    _rand_similiar(x) = x isa Real ? randn() : randn(size(x))
-                    dup_args = map(x -> Duplicated(x, _rand_similiar(x)), primals[2:end])
+                    _rand_similar(x) = x isa Real ? randn() : randn(size(x))
+                    dup_args = map(x -> Duplicated(x, _rand_similar(x)), primals[2:end])
                     GC.gc(true)
+                    prim =
+                        if primals[1] isa Base.Fix1 &&
+                            primals[1].x isa DynamicPPL.LogDensityFunction
+                            Const(primals[1])
+                        else
+                            primals[1]
+                        end
                     suite["enzyme"] = @be(
                         _,
                         _,
-                        autodiff(ReverseWithPrimal, $primals[1], Active, $dup_args...),
+                        autodiff(ReverseWithPrimal, $prim, Active, $dup_args...),
                         _,
                         evals = 1,
                     )
