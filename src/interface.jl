@@ -214,7 +214,7 @@ function __exclude_func_with_unsupported_output(fx)
     _fx = deepcopy(fx)
     _func, _args = _fx[1], _fx[2:end]
     _y = _func(_args...)
-    __exclude_unsupported_output(_y)
+    return __exclude_unsupported_output(_y)
 end
 
 """
@@ -500,8 +500,11 @@ Mooncake.value_and_pullback!!(cache, 1.0, f, x, y)
 ```
 """
 function value_and_pullback!!(
-    cache::Cache, ȳ, f::F, x::Vararg{Any,N};
-    args_to_zero::NTuple=ntuple(_ -> true, Val(length(x)+1))
+    cache::Cache,
+    ȳ,
+    f::F,
+    x::Vararg{Any,N};
+    args_to_zero::NTuple=ntuple(_ -> true, Val(length(x) + 1)),
 ) where {F,N}
     tangents = tuple_map(set_to_zero_maybe!!, cache.tangents, args_to_zero)
     coduals = tuple_map(CoDual, (f, x...), tangents)
@@ -567,8 +570,10 @@ value_and_gradient!!(cache, f, x, y)
 ```
 """
 function value_and_gradient!!(
-    cache::Cache, f::F, x::Vararg{Any,N};
-    args_to_zero::NTuple=ntuple(_ -> true, Val(length(x)+1))
+    cache::Cache,
+    f::F,
+    x::Vararg{Any,N};
+    args_to_zero::NTuple=ntuple(_ -> true, Val(length(x) + 1)),
 ) where {F,N}
     tangents = tuple_map(set_to_zero_maybe!!, cache.tangents, args_to_zero)
     coduals = tuple_map(CoDual, (f, x...), tangents)

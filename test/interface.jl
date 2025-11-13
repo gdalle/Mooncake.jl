@@ -1,4 +1,9 @@
 using Mooncake.TestUtils: count_allocs
+using Mooncake:
+    prepare_gradient_cache,
+    prepare_pullback_cache,
+    value_and_gradient!!,
+    value_and_pullback!!
 
 @testset "interface" begin
     @testset "$(typeof((f, x...)))" for (ȳ, f, x...) in Any[
@@ -184,7 +189,6 @@ using Mooncake.TestUtils: count_allocs
 
         @testset "__exclude_unsupported_output , $(test_set)" for test_set in
                                                                   additional_test_set
-
             try
                 Mooncake.__exclude_unsupported_output(test_set[2])
             catch err
@@ -194,7 +198,6 @@ using Mooncake.TestUtils: count_allocs
 
         @testset "_copy_output & _copy_to_output!!, $(test_set)" for test_set in
                                                                      additional_test_set
-
             original = test_set[2]
             try
                 if isnothing(Mooncake.__exclude_unsupported_output(original))
@@ -225,7 +228,7 @@ using Mooncake.TestUtils: count_allocs
     end
 
     @testset "selective zeroing of cotangents" begin
-        f= (x, y) -> sum(abs2, x) - sum(abs2, y)
+        f = (x, y) -> sum(abs2, x) - sum(abs2, y)
         x = [1.0, 2.0]
         y = [3.0, 4.0]
 
