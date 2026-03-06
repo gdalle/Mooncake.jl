@@ -193,6 +193,31 @@ end
                 pb[2],
                 SimplePair(2x.x1 * x̄.x1 + x.x2 * x̄.x2, cos(x.x2) * x̄.x1 + x.x1 * x̄.x2),
             )
+
+            # Regression test: _copy_output must use nfields(src), not nfields(P);
+            # nfields(P) returns the wrong field count, causing jl_new_structv to
+            # raise "invalid struct allocation".
+            struct ImmutableWithNothingFields
+                a::Float64
+                b::Float64
+                c::Nothing
+            end
+            nothing_struct = ImmutableWithNothingFields(1.0, 2.0, nothing)
+            f_nothing_struct = let s = nothing_struct
+                function (x::Vector{Float64})
+                    return x .* s.a .+ s.b
+                end
+            end
+            x_vec = randn(3)
+            cache_ns = Mooncake.prepare_pullback_cache(
+                f_nothing_struct, x_vec; config=Mooncake.Config(; friendly_tangents=true)
+            )
+            ȳ_vec = ones(3)
+            v_ns, pb_ns = Mooncake.value_and_pullback!!(
+                cache_ns, ȳ_vec, f_nothing_struct, x_vec
+            )
+            @test v_ns ≈ x_vec .* nothing_struct.a .+ nothing_struct.b
+            @test pb_ns[2] ≈ ȳ_vec .* nothing_struct.a
         end
     end
 
@@ -299,6 +324,39 @@ end
             catch err
                 @test isa(err, Mooncake.ValueAndPullbackReturnTypeError)
             end
+        end
+
+        # Regression test: _copy_output must handle Type values, Core.TypeName,
+        # and Modules, which cannot be deep-copied (returned as-is), to avoid a
+        # TypeError when a closure captures a struct containing such fields
+        # (e.g. FunctionWrapper).
+        @testset "_copy_output non-deep-copyable types" begin
+            # Type values
+            @test Mooncake._copy_output(Float64) === Float64
+            @test Mooncake._copy_output(Vector{Float64}) === Vector{Float64}
+            @test Mooncake._copy_output(Union{Float64,Int64}) === Union{Float64,Int64}
+
+            # Core.TypeName
+            @test Mooncake._copy_output(Float64.name) === Float64.name
+
+            # Module
+            @test Mooncake._copy_output(Base) === Base
+
+            # _copy_to_output!! for the same non-deep-copyable types
+            @test Mooncake._copy_to_output!!(Float64, Float64) === Float64
+            @test Mooncake._copy_to_output!!(Float64.name, Float64.name) === Float64.name
+            @test Mooncake._copy_to_output!!(Base, Base) === Base
+
+            # Mutable struct containing a Type field.
+            mutable struct MutableWithTypeField
+                t::Type
+                x::Float64
+            end
+            obj = MutableWithTypeField(Float64, 1.0)
+            obj_copy = Mooncake._copy_output(obj)
+            @test typeof(obj_copy) == MutableWithTypeField
+            @test obj_copy.t === Float64
+            @test obj_copy.x == 1.0
         end
     end
     @testset "forwards mode ($kwargs)" for kwargs in [
