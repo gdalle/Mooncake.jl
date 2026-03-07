@@ -353,6 +353,47 @@ end
             @test typeof(obj_copy) == MutableWithTypeField
             @test obj_copy.t === Float64
             @test obj_copy.x == 1.0
+            obj2 = MutableWithTypeField(Int64, 2.0)
+            Mooncake._copy_to_output!!(obj_copy, obj2)
+            @test obj_copy.t === Int64
+            @test obj_copy.x == 2.0
+        end
+
+        # Fix for #1033: opaque mutable types (nfields == 0).
+        @testset "_copy_output opaque mutable types (Symbol, String, Dict)" begin
+            # Symbol and String are mutable with 0 user-visible fields
+            @test Mooncake._copy_output(:hello) === :hello
+            @test Mooncake._copy_output("hello") === "hello"
+
+            # _copy_to_output!! must return src for opaque mutable types, not dst
+            @test Mooncake._copy_to_output!!(:hello, :world) === :world
+            @test Mooncake._copy_to_output!!("hello", "world") === "world"
+
+            # Dict contains a Memory{Symbol} (keys) internally
+            d = Dict(:x => 1, :y => 2)
+            d_copy = Mooncake._copy_output(d)
+            @test d_copy == d
+            @test d_copy !== d
+
+            # Dict{Symbol, Any}
+            d2 = Dict{Symbol,Any}(:x => [1.0, 2.0], :n => 3)
+            d2_copy = Mooncake._copy_output(d2)
+            @test d2_copy == d2
+            @test d2_copy !== d2
+
+            # Struct containing a Dict must also be copyable
+            struct DataStoreForTest
+                _n::Int
+                _data::Dict{Symbol,Any}
+            end
+            ds = DataStoreForTest(3, Dict{Symbol,Any}(:x => randn(Float32, 2)))
+            ds_copy = Mooncake._copy_output(ds)
+            @test ds_copy._n == ds._n
+            @test ds_copy._data == ds._data
+            ds2 = DataStoreForTest(5, Dict{Symbol,Any}(:y => randn(Float32, 2)))
+            ds_copy2 = Mooncake._copy_to_output!!(ds_copy, ds2)
+            @test ds_copy2._n == ds2._n
+            @test ds_copy2._data == ds2._data
         end
     end
     @testset "forwards mode ($kwargs)" for kwargs in [
