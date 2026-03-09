@@ -37,6 +37,7 @@ using Core:
     compilerbarrier
 using Core.Compiler: IRCode, NewInstruction
 using Core.Intrinsics: pointerref, pointerset
+using LinearAlgebra: dot
 using LinearAlgebra.BLAS: @blasfunc, BlasInt, trsm!, BlasFloat
 using LinearAlgebra.LAPACK: getrf!, getrs!, getri!, trtrs!, potrf!, potrs!
 using DispatchDoctor: @stable, @unstable, DispatchDoctor
