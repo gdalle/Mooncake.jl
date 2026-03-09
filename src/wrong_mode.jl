@@ -154,7 +154,7 @@ end
 function basis(a::Array{<:IEEEFloat}, i)
     # TODO: fix for immutable arrays
     # TODO: fix for GPU arrays
-    b = zeros(eltype(a), size(a))
+    b = zero(a)
     b[i] = oneunit(eltype(b))
     return b
 end
