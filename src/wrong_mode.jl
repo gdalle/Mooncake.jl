@@ -64,22 +64,23 @@ function (forward_mode_rrule!!::ForwardModeRRule!!)(
             else
                 @assert args[i] isa Array{<:IEEEFloat} # TODO: relax
                 # iterate over input dimensions
-                tangent(args_codual[i]) .+= map(eachindex(args[i])) do j
-                    # create perturbation of scalar dimension j of argument i
-                    args_dual_one_ij = (
-                        args_dual_zero[begin:(i - 1)]...,
-                        Dual(args[i], basis(args[i], j)),
-                        args_dual_zero[(i + 1):end]...,
-                    )
-                    # compute partial derivative with respect to dimension j of argument i
-                    y_dual_one_ij = _frule!!(f_dual, args_dual_one_ij...)
-                    partial_derivative_ij = tangent(y_dual_one_ij)
-                    # deduce one component of the pullback using a dot product
-                    rdata_ij =
-                        dot(fdata(partial_derivative_ij), tangent(y_codual)) +
-                        dot(rdata(partial_derivative_ij), dy_rdata)
-                    return rdata_ij
-                end
+                tangent(args_codual[i]) .+=
+                    map(eachindex(args[i])) do j
+                        # create perturbation of scalar dimension j of argument i
+                        args_dual_one_ij = (
+                            args_dual_zero[begin:(i - 1)]...,
+                            Dual(args[i], basis(args[i], j)),
+                            args_dual_zero[(i + 1):end]...,
+                        )
+                        # compute partial derivative with respect to dimension j of argument i
+                        y_dual_one_ij = _frule!!(f_dual, args_dual_one_ij...)
+                        partial_derivative_ij = tangent(y_dual_one_ij)
+                        # deduce one component of the pullback using a dot product
+                        rdata_ij =
+                            dot(fdata(partial_derivative_ij), tangent(y_codual)) +
+                            dot(rdata(partial_derivative_ij), dy_rdata)
+                        return rdata_ij
+                    end
                 return nothing
             end
         end
