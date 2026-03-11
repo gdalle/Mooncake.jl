@@ -2,7 +2,10 @@ struct ForwardModeRRule!!{FR}
     _frule!!::FR
 end
 
-__verify_sig(rule::ForwardModeRRule!!, fx) = __verify_sig(rule._frule!!, fx)
+function __verify_sig(rule::ForwardModeRRule!!, fx)
+    # TODO: modify `fx`
+    return __verify_sig(rule._frule!!, fx)
+end
 
 function (forward_mode_rrule!!::ForwardModeRRule!!)(
     f_codual::CoDual{F},

@@ -145,8 +145,6 @@ end;
 # unsupported types
 f7(x::Tuple{Float64}) = x[1]
 
-@reverse_from_forward(Tuple{typeof(f5),Float64})
-@reverse_from_forward(Tuple{typeof(f6),Vector{Float64}})
 @reverse_from_forward(Tuple{typeof(f7),Tuple{Float64}})
 
 struct Multiplier

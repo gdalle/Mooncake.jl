@@ -264,9 +264,7 @@ function fdata(t::T) where {T}
 end
 
 function fdata(::Type{T}) where {T}
-    return error(
-        "$T is a type. Perhaps you meant fdata_type($T) or fdata(instance_of_tangent)?"
-    )
+    error("$T is a type. Perhaps you meant fdata_type($T) or fdata(instance_of_tangent)?")
 end
 
 function fdata(t::T) where {T<:PossiblyUninitTangent}
@@ -370,8 +368,9 @@ end
 @unstable @inline _get_fdata_field(f::NamedTuple, name) = getfield(f, name)
 @unstable @inline _get_fdata_field(f::Tuple, name) = getfield(f, name)
 @unstable @inline _get_fdata_field(f::FData, name) = val(getfield(f.data, name))
-@unstable @inline _get_fdata_field(f::MutableTangent, name) =
-    fdata(val(getfield(f.fields, name)))
+@unstable @inline _get_fdata_field(f::MutableTangent, name) = fdata(
+    val(getfield(f.fields, name))
+)
 
 function __verify_fdata_value(c::IdDict{Any,Nothing}, p, f)
 
@@ -553,9 +552,7 @@ function rdata(t::T) where {T}
 end
 
 function rdata(::Type{T}) where {T}
-    return error(
-        "$T is a type. Perhaps you meant rdata_type($T) or rdata(instance_of_tangent)?"
-    )
+    error("$T is a type. Perhaps you meant rdata_type($T) or rdata(instance_of_tangent)?")
 end
 
 function rdata(t::T) where {T<:PossiblyUninitTangent}
@@ -899,7 +896,7 @@ tangent type. This method must be equivalent to `tangent_type(_typeof(primal))`.
     # does not meet the constraint on T, an R==NoRData already has a more
     # specific dispatch defined
     @assert R isa Union
-    return Union{tangent_type(NoFData, R.a),tangent_type(NoFData, R.b)}
+    Union{tangent_type(NoFData, R.a),tangent_type(NoFData, R.b)}
 end
 @foldable function tangent_type(
     ::Type{F}, ::Type{NoRData}
@@ -909,7 +906,7 @@ end
     # not a union would be if F==Any, but _validate_union causes
     # that case to error
     @assert F isa Union
-    return Union{tangent_type(F.a, NoRData),tangent_type(F.b, NoRData)}
+    Union{tangent_type(F.a, NoRData),tangent_type(F.b, NoRData)}
 end
 function _validate_union(::Type{F}) where {F<:Union{NoFData,T} where {T}}
     _T = F isa Union ? (F.a == NoFData ? F.b : F.a) : F
