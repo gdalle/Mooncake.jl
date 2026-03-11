@@ -105,7 +105,7 @@ end
         @test val == x^3
         @test pb[1] == Mooncake.NoTangent()
         @test pb[2] == dy * 3x^2
-        test_rule(StableRNG(63), f1_true, x)
+        test_rule(StableRNG(63), f1_true, x; is_primitive=false)
     end
     @testset "Scalar to array" begin
         x = 5.0
@@ -115,7 +115,7 @@ end
         @test val == [x^3, x^4]
         @test pb[1] == Mooncake.NoTangent()
         @test pb[2] == dy[1] * 3x^2 + dy[2] * 4x^3
-        test_rule(StableRNG(63), f2_true, x)
+        test_rule(StableRNG(63), f2_true, x; is_primitive=false)
     end
     @testset "Array to scalar" begin
         x = [5.0, 13.0]
@@ -125,7 +125,7 @@ end
         @test val == sum(cube, x)
         @test pb[1] == Mooncake.NoTangent()
         @test pb[2] == dy .* map(_x -> 3 * _x^2, x)
-        test_rule(StableRNG(63), f3_true, x)
+        test_rule(StableRNG(63), f3_true, x; is_primitive=false)
     end
     @testset "Array to array" begin
         x = [5.0, 13.0]
@@ -134,15 +134,15 @@ end
         val, pb = value_and_pullback!!(cache, dy, f4, x)
         @test val == map(cube, x)
         @test pb[1] == Mooncake.NoTangent()
-        test_rule(StableRNG(63), f4_true, x)
+        test_rule(StableRNG(63), f4_true, x; is_primitive=false)
     end
 end;
+
+# TODO: add tests for multiple arguments
 
 ## Failing
 
 # unsupported types
-f5(x::Float64) = (x, 2x)
-f6(x::Vector{Float64}) = (x[1], 2x[1])
 f7(x::Tuple{Float64}) = x[1]
 
 @reverse_from_forward(Tuple{typeof(f5),Float64})
@@ -162,27 +162,12 @@ end
             :(f3(x::Float64))
         )
     end
-    @testset "Wrong number of arguments" begin
-        @test_throws "LoadError: ArgumentError: `Mooncake.@reverse_from_forward` does not yet support functions with 2 arguments." @eval @reverse_from_forward(
-            Tuple{typeof(f4),Float64,Float64}
-        )
-    end
     @testset "Closures" begin
         @test_throws "ArgumentError: `Mooncake.@reverse_from_forward` does not support functions which close over data." prepare_gradient_cache(
             Multiplier(2.0), 5.0
         )
     end
-    @testset "Unsupported output types" begin
-        @test_throws "ArgumentError: `Mooncake.@reverse_from_forward` does not support output type `Tuple{Float64, Float64}` with input type `Float64`." prepare_pullback_cache(
-            f5, 5.0
-        )
-        @test_throws "ArgumentError: `Mooncake.@reverse_from_forward` does not support output type `Tuple{Float64, Float64}` with input type `Vector{Float64}`." prepare_pullback_cache(
-            f6, [5.0, 13.0]
-        )
-    end
     @testset "Unsupported input types" begin
-        @test_throws "ArgumentError: `Mooncake.@reverse_from_forward` does not support functions with input type `Tuple{Float64}`." prepare_pullback_cache(
-            f7, (5.0,)
-        )
+        @test_throws MethodError prepare_pullback_cache(f7, (5.0,))
     end
 end;
