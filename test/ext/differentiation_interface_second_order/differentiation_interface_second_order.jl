@@ -16,7 +16,7 @@ else
 end
 
 scens = filter(DifferentiationInterfaceTest.default_scenarios()) do s
-   s.f !== DifferentiationInterfaceTest.arr_to_num_no_linalg
+    s.f !== DifferentiationInterfaceTest.arr_to_num_no_linalg
 end
 
 # Test second-order differentiation (forward-over-reverse)
