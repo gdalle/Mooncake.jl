@@ -31,7 +31,7 @@ f = A -> real(sum(A * adjoint(A)))
 ```
 
 **Broadcasting** — CUDA.jl compiles a specialised GPU kernel for each broadcast
-expression at runtime via `cufunction`. From Mooncake's perspective this kernel is
+expression at runtime via `cufunction`. From Mooncake's perspective, this kernel is
 a `foreigncall` — opaque Julia source that cannot be traced. To differentiate
 through it, Mooncake exploits CUDA.jl's support for user-defined GPU-compatible
 types: `NDual` dual numbers are registered as valid GPU element types, so the same
@@ -58,17 +58,17 @@ f = x -> sum(Array(x).^2)           # GPU → CPU
 
 **Memory management** — `DataRef`, `unsafe_free!`, `Core.finalizer`, `CuPtr`
 arithmetic, and cuDNN type registrations that allow Mooncake to trace through
-cuDNN-adjacent code without crashing.
+cuDNN-adjacent code.
 
 CI integration tests added for Flux and Lux models (CPU + GPU). Flux/Lux-specific
 rules are outside Mooncake's scope — models run via the general CUDA extension rules.
-CPU differentiation is unaffected by the GPU performance limitation below.
 
 **Known limitation — Flux/Lux GPU performance:** without explicit reverse-mode rules
 for neural network operators, Mooncake falls back to the NDual forward-mode broadcast
 described above, which is correct but scales as O(params) in memory and kernel
 launches. Large models are prohibitively slow on GPU until explicit `rrule!!`s are
-added for key operations (e.g. cuDNN BatchNorm, …).
+added for key operations (e.g. cuDNN `BatchNorm`, …). CPU differentiation is unaffected 
+by this performance limitation.
 
 # 0.5.0
 
