@@ -2,7 +2,7 @@
 
 ## CUDA extension
 
-Differentiation support for standard Julia/CUDA operations, focusing on four areas.
+Differentiation support for standard Julia/CUDA operations, focusing on
 
 **Linear algebra** — BLAS matrix–vector products, `dot`, `norm`, and reductions (`sum`, `prod`, `cumsum`, `cumprod`, `mapreduce`) are supported, including complex inputs. Vector indexing is also supported for CUDA arrays. Scalar indexing is not supported by design.
 
