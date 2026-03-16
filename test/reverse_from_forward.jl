@@ -104,6 +104,10 @@ end
 @reverse_from_forward Tuple{typeof(f5),AbstractArray{<:AbstractFloat},AbstractFloat}
 @reverse_from_forward Tuple{typeof(f6),AbstractFloat,AbstractArray{<:AbstractFloat}}
 
+# is_primitive=false because test_rule's is_primitive=true asserts the rule is exactly rrule!!,
+# but @reverse_from_forward registers a ForwardModeRRule!! via build_primitive_rrule. With
+# is_primitive=false the type-equality check is skipped while the rule is still built and
+# numerically validated via finite differences.
 @testset verbose = true "Working cases" begin
     @testset "Scalar to scalar" begin
         x = 5.0
@@ -113,7 +117,7 @@ end
         @test val == x^3
         @test pb[1] == Mooncake.NoTangent()
         @test pb[2] == dy * 3x^2
-        test_rule(StableRNG(63), f1_true, x; is_primitive=false)  # TODO: switch to true
+        test_rule(StableRNG(63), f1_true, x; is_primitive=false)
     end
     @testset "Scalar to array" begin
         x = 5.0
@@ -123,7 +127,7 @@ end
         @test val == [x^3, x^4]
         @test pb[1] == Mooncake.NoTangent()
         @test pb[2] == dy[1] * 3x^2 + dy[2] * 4x^3
-        test_rule(StableRNG(63), f2_true, x; is_primitive=false)  # TODO: switch to true
+        test_rule(StableRNG(63), f2_true, x; is_primitive=false)
     end
     @testset "Array to scalar" begin
         x = [5.0, 13.0]
@@ -133,7 +137,7 @@ end
         @test val == sum(cube, x)
         @test pb[1] == Mooncake.NoTangent()
         @test pb[2] == dy .* map(_x -> 3 * _x^2, x)
-        test_rule(StableRNG(63), f3_true, x; is_primitive=false)  # TODO: switch to true
+        test_rule(StableRNG(63), f3_true, x; is_primitive=false)
     end
     @testset "Array to array" begin
         x = [5.0, 13.0]
@@ -142,7 +146,8 @@ end
         val, pb = value_and_pullback!!(cache, dy, f4, x)
         @test val == map(cube, x)
         @test pb[1] == Mooncake.NoTangent()
-        test_rule(StableRNG(63), f4_true, x; is_primitive=false)  # TODO: switch to true
+        @test pb[2] ≈ dy .* map(_x -> 3 * _x^2, x)
+        test_rule(StableRNG(63), f4_true, x; is_primitive=false)
     end
     @testset "Multiple arguments" begin
         x = [5.0, 13.0]

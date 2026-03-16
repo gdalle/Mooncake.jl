@@ -10,8 +10,6 @@ Base.copy(::NoFData) = NoFData()
 
 increment_internal!!(::IncCache, ::NoFData, ::NoFData) = NoFData()
 
-LinearAlgebra.dot(::NoFData, ::NoFData) = false
-
 """
     FData(data::NamedTuple)
 
@@ -415,7 +413,12 @@ Base.copy(::NoRData) = NoRData()
 
 @inline increment_field!!(::NoRData, y, ::Val) = NoRData()
 
-LinearAlgebra.dot(::NoRData, ::NoRData) = false
+# Required so that _dot dispatches correctly: No{F,R}Data carry no information so their
+# contribution to any inner product is zero.
+_dot_internal(::MaybeCache, ::NoFData, ::NoFData) = 0.0
+_dot_internal(::MaybeCache, ::NoRData, ::NoRData) = 0.0
+LinearAlgebra.dot(x::NoFData, y::NoFData) = _dot(x, y)
+LinearAlgebra.dot(x::NoRData, y::NoRData) = _dot(x, y)
 
 struct RData{T<:NamedTuple}
     data::T
