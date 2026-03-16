@@ -40,11 +40,9 @@ function (forward_mode_rrule!!::ForwardModeRRule!!)(
             else
                 @assert args[i] isa IEEEFloat # TODO: relax
                 # create perturbation of scalar argument i
-                args_dual_one_i = (
-                    args_dual_zero[begin:(i - 1)]...,
-                    Dual(args[i], one(args[i])),
-                    args_dual_zero[(i + 1):end]...,
-                )
+                args_dual_one_i = ntuple(Val(N)) do k
+                    k == i ? Dual(args[i], one(args[i])) : args_dual_zero[k]
+                end
                 # compute partial derivative with respect to argument i
                 y_dual_one_i = _frule!!(f_dual, args_dual_one_i...)
                 partial_derivative_i = tangent(y_dual_one_i)
@@ -68,11 +66,9 @@ function (forward_mode_rrule!!::ForwardModeRRule!!)(
                 b = zero(args[i])
                 for j in eachindex(args[i])
                     b[j] = oneunit(eltype(b))
-                    args_dual_one_ij = (
-                        args_dual_zero[begin:(i - 1)]...,
-                        Dual(args[i], b),
-                        args_dual_zero[(i + 1):end]...,
-                    )
+                    args_dual_one_ij = ntuple(Val(N)) do k
+                        k == i ? Dual(args[i], b) : args_dual_zero[k]
+                    end
                     y_dual_one_ij = _frule!!(f_dual, args_dual_one_ij...)
                     partial_derivative_ij = tangent(y_dual_one_ij)
                     tangent(args_codual[i])[j] +=
