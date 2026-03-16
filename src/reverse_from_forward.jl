@@ -63,24 +63,23 @@ function (forward_mode_rrule!!::ForwardModeRRule!!)(
                 return nothing
             else
                 @assert args[i] isa Array{<:IEEEFloat} # TODO: relax
-                # iterate over input dimensions
-                tangent(args_codual[i]) .+=
-                    map(eachindex(args[i])) do j
-                        # create perturbation of scalar dimension j of argument i
-                        args_dual_one_ij = (
-                            args_dual_zero[begin:(i - 1)]...,
-                            Dual(args[i], basis(args[i], j)),
-                            args_dual_zero[(i + 1):end]...,
-                        )
-                        # compute partial derivative with respect to dimension j of argument i
-                        y_dual_one_ij = _frule!!(f_dual, args_dual_one_ij...)
-                        partial_derivative_ij = tangent(y_dual_one_ij)
-                        # deduce one component of the pullback using a dot product
-                        rdata_ij =
-                            dot(fdata(partial_derivative_ij), tangent(y_codual)) +
-                            dot(rdata(partial_derivative_ij), dy_rdata)
-                        return rdata_ij
-                    end
+                # Reuse a single buffer for the basis vector: set b[j]=1, call frule, reset.
+                # This avoids one allocation per input dimension.
+                b = zero(args[i])
+                for j in eachindex(args[i])
+                    b[j] = oneunit(eltype(b))
+                    args_dual_one_ij = (
+                        args_dual_zero[begin:(i - 1)]...,
+                        Dual(args[i], b),
+                        args_dual_zero[(i + 1):end]...,
+                    )
+                    y_dual_one_ij = _frule!!(f_dual, args_dual_one_ij...)
+                    partial_derivative_ij = tangent(y_dual_one_ij)
+                    tangent(args_codual[i])[j] +=
+                        dot(fdata(partial_derivative_ij), tangent(y_codual)) +
+                        dot(rdata(partial_derivative_ij), dy_rdata)
+                    b[j] = zero(eltype(b))
+                end
                 return nothing
             end
         end
@@ -93,13 +92,6 @@ function (forward_mode_rrule!!::ForwardModeRRule!!)(
     return y_codual, forward_mode_pullback
 end
 
-function basis(a::Array{<:IEEEFloat}, i)
-    # TODO: fix for immutable arrays
-    # TODO: fix for GPU arrays
-    b = zero(a)
-    b[i] = oneunit(eltype(b))
-    return b
-end
 
 """
     @reverse_from_forward signature
