@@ -35,6 +35,10 @@ f3_true(x::Vector{Float64}) = sum(cube, x)
 f4(x::Vector{Float64}) = map(sin, x)
 f4_true(x::Vector{Float64}) = map(cube, x)
 
+# not primitives, we'll rely on derived forward rules
+f5(x::AbstractArray{<:Real}, y::Real) = sin(y) * sum(abs2, x)
+f6(y, x) = f5(x, y)
+
 @is_primitive DefaultCtx ForwardMode Tuple{typeof(f1),Float64}
 @is_primitive DefaultCtx ForwardMode Tuple{typeof(f1_true),Float64}
 
@@ -96,6 +100,10 @@ end
 @reverse_from_forward Tuple{typeof(f4),Vector{Float64}}
 @reverse_from_forward Tuple{typeof(f4_true),Vector{Float64}}
 
+# use abstract types
+@reverse_from_forward Tuple{typeof(f5),AbstractArray{<:AbstractFloat},AbstractFloat}
+@reverse_from_forward Tuple{typeof(f6),AbstractFloat,AbstractArray{<:AbstractFloat}}
+
 @testset verbose = true "Working cases" begin
     @testset "Scalar to scalar" begin
         x = 5.0
@@ -105,7 +113,7 @@ end
         @test val == x^3
         @test pb[1] == Mooncake.NoTangent()
         @test pb[2] == dy * 3x^2
-        test_rule(StableRNG(63), f1_true, x; is_primitive=false)
+        test_rule(StableRNG(63), f1_true, x; is_primitive=false)  # TODO: switch to true
     end
     @testset "Scalar to array" begin
         x = 5.0
@@ -115,7 +123,7 @@ end
         @test val == [x^3, x^4]
         @test pb[1] == Mooncake.NoTangent()
         @test pb[2] == dy[1] * 3x^2 + dy[2] * 4x^3
-        test_rule(StableRNG(63), f2_true, x; is_primitive=false)
+        test_rule(StableRNG(63), f2_true, x; is_primitive=false)  # TODO: switch to true
     end
     @testset "Array to scalar" begin
         x = [5.0, 13.0]
@@ -125,7 +133,7 @@ end
         @test val == sum(cube, x)
         @test pb[1] == Mooncake.NoTangent()
         @test pb[2] == dy .* map(_x -> 3 * _x^2, x)
-        test_rule(StableRNG(63), f3_true, x; is_primitive=false)
+        test_rule(StableRNG(63), f3_true, x; is_primitive=false)  # TODO: switch to true
     end
     @testset "Array to array" begin
         x = [5.0, 13.0]
@@ -134,18 +142,29 @@ end
         val, pb = value_and_pullback!!(cache, dy, f4, x)
         @test val == map(cube, x)
         @test pb[1] == Mooncake.NoTangent()
-        test_rule(StableRNG(63), f4_true, x; is_primitive=false)
+        test_rule(StableRNG(63), f4_true, x; is_primitive=false)  # TODO: switch to true
+    end
+    @testset "Multiple arguments" begin
+        x = [5.0, 13.0]
+        y = 11.0
+        dz = 17.0
+        cache = prepare_pullback_cache(f5, zero(x), zero(y))
+        val, pb = value_and_pullback!!(cache, dz, f5, x, y)
+        @test val == sin(y) * sum(abs2, x)
+        @test pb[1] == Mooncake.NoTangent()
+        test_rule(StableRNG(63), f5, x, y; is_primitive=false)
+        test_rule(StableRNG(63), f6, y, x; is_primitive=false)
     end
 end;
 
-# TODO: add tests for multiple arguments
-
 ## Failing
 
+# forgot macro
+f5_nomacro(x, y) = f5(x, y)
 # unsupported types
-f7(x::Tuple{Float64}) = x[1]
+f_tup(x::Tuple{Float64}) = x[1]
 
-@reverse_from_forward(Tuple{typeof(f7),Tuple{Float64}})
+@reverse_from_forward(Tuple{typeof(f_tup),Tuple{Float64}})
 
 struct Multiplier
     a::Float64
@@ -166,6 +185,16 @@ end
         )
     end
     @testset "Unsupported input types" begin
-        @test_throws MethodError prepare_pullback_cache(f7, (5.0,))
+        @test_throws MethodError prepare_pullback_cache(f_tup, (5.0,))
+    end
+    @testset "Forgot macro" begin
+        @test_throws "MethodError: no method matching rrule!!" prepare_pullback_cache(
+            f5_nomacro, [1.0], 2.0
+        )
+    end
+    @testset "Wrong signature (no method)" begin
+        @test_throws "MethodError: no method matching f1(::Float32)" prepare_pullback_cache(
+            f1, Float32(1.0)
+        )
     end
 end;

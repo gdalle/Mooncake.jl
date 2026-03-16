@@ -25,7 +25,7 @@ include("front_matter.jl")
         include("config.jl")
         include("developer_tools.jl")
         include("test_utils.jl")
-        include("wrong_mode.jl")
+        include("reverse_from_forward.jl")
     elseif test_group == "rules/array_legacy"
         include(joinpath("rules", "array_legacy.jl"))
     elseif test_group == "rules/avoiding_non_differentiable_code"
