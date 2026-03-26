@@ -454,7 +454,6 @@ rule_type_nonreturning(e::Exception) = throw(e)
         rule = Mooncake.DynamicDerivedRule(false)
         args = (zero_fcodual(identity), zero_fcodual((v=S2SGlobals.MakeAUnionAll,)))
         @test rule(args...) isa Tuple{CoDual,Any}
-
     end
     @testset "_pullback_type" begin
         # On Julia 1.10, keyword functions are lowered to old-style `##foo#N` wrappers
