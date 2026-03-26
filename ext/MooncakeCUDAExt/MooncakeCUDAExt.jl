@@ -134,6 +134,14 @@ Mooncake.__verify_fdata_value(::IdDict{Any,Nothing}, ::CuDataRef, ::CuDataRef) =
 # the DataRef tangent has already been replaced and copy(x) is never written to.
 zero_tangent_internal(x::T, ::MaybeCache) where {T<:CuDataRef} = copy(x)
 
+# Base._check_mutable(o) is called by GPUArrays.derive on Julia 1.10 to assert that the
+# array is mutable before constructing a view.  It returns nothing and has no differentiable
+# content; Mooncake cannot trace it on 1.10 because it contains an internal intrinsic.
+# Removed from the call path in Julia 1.11+.
+@static if VERSION < v"1.11-"
+    @zero_derivative MinimalCtx Tuple{typeof(Base._check_mutable),Any}
+end
+
 # copy(::CuDataRef) is called by GPUArrays.derive (which backs view, reinterpret, and
 # similar operations) for reference-count management.  It is a bookkeeping operation —
 # the primal copy increments the refcount; the tangent DataRef is also copied so that the
