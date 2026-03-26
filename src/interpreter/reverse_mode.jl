@@ -922,7 +922,7 @@ function pullback_type(Trule, arg_types)
 end
 
 _pullback_type(::Core.TypeofBottom) = Any
-_pullback_type(T::DataType) = T.parameters[2]
+_pullback_type(T::DataType) = length(T.parameters) >= 2 ? T.parameters[2] : Any
 _pullback_type(T::Union) = Union{_pullback_type(T.a),_pullback_type(T.b)}
 
 # Used by the getfield special-case in call / invoke statments.
