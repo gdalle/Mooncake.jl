@@ -455,15 +455,17 @@ rule_type_nonreturning(e::Exception) = throw(e)
         args = (zero_fcodual(identity), zero_fcodual((v=S2SGlobals.MakeAUnionAll,)))
         @test rule(args...) isa Tuple{CoDual,Any}
 
-        # _pullback_type must not throw when `Core.Compiler.return_type` returns a bare
-        # `Tuple` type (0 parameters) or another Tuple subtype with fewer than 2 parameters.
-        # Previously `_pullback_type(T::DataType) = T.parameters[2]` would throw a
-        # BoundsError in such cases, causing rule compilation to fail for functions whose
-        # body contains calls inferred to return abstract Tuple types (e.g. NNlib dropout
-        # keyword wrappers).
-        @test Mooncake._pullback_type(Tuple) === Any
-        @test Mooncake._pullback_type(Tuple{}) === Any
-        @test Mooncake._pullback_type(Tuple{Int}) === Any
+    end
+    @testset "_pullback_type" begin
+        # `Core.Compiler.return_type` can return `Tuple` (the abstract bare type, with
+        # 1 parameter `Vararg{Any}`) or other Tuple subtypes with fewer than 2 parameters
+        # when inference cannot determine the concrete return type of an rrule call.
+        # `_pullback_type` must handle these cases without throwing a BoundsError.
+        @test Mooncake._pullback_type(Tuple) === Any        # 1 parameter: Vararg{Any}
+        @test Mooncake._pullback_type(Tuple{}) === Any      # 0 parameters
+        @test Mooncake._pullback_type(Tuple{Int}) === Any   # 1 parameter
+        # Sanity-check: well-formed 2-element tuple still extracts the second parameter.
+        @test Mooncake._pullback_type(Tuple{Int,Float64}) === Float64
     end
     @testset "literal Strings do not appear in shared data" begin
         f() = "hello"
