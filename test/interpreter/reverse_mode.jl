@@ -457,13 +457,16 @@ rule_type_nonreturning(e::Exception) = throw(e)
 
     end
     @testset "_pullback_type" begin
-        # `Core.Compiler.return_type` can return `Tuple` (the abstract bare type, with
-        # 1 parameter `Vararg{Any}`) or other Tuple subtypes with fewer than 2 parameters
-        # when inference cannot determine the concrete return type of an rrule call.
-        # `_pullback_type` must handle these cases without throwing a BoundsError.
-        @test Mooncake._pullback_type(Tuple) === Any        # 1 parameter: Vararg{Any}
-        @test Mooncake._pullback_type(Tuple{}) === Any      # 0 parameters
-        @test Mooncake._pullback_type(Tuple{Int}) === Any   # 1 parameter
+        # On Julia 1.10, keyword functions are lowered to old-style `##foo#N` wrappers
+        # rather than `Core.kwcall`. When Mooncake compiles a derived rrule for such a
+        # wrapper, `pullback_type` calls `Core.Compiler.return_type` on the inner `rrule!!`
+        # call. If inference gives up — e.g. because the `@from_rrule` wrapper calls
+        # `ChainRulesCore.rrule` and the pullback closure type cannot be resolved — it
+        # returns bare `Tuple`, whose `parameters` field is `svec(Vararg{Any})` (length 1).
+        # `_pullback_type` must not index past the end of that vector.
+        @test Mooncake._pullback_type(Tuple) === Any        # svec(Vararg{Any}), length 1
+        @test Mooncake._pullback_type(Tuple{}) === Any      # svec(), length 0
+        @test Mooncake._pullback_type(Tuple{Int}) === Any   # svec(Int), length 1
         # Sanity-check: well-formed 2-element tuple still extracts the second parameter.
         @test Mooncake._pullback_type(Tuple{Int,Float64}) === Float64
     end
