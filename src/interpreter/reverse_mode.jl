@@ -324,7 +324,7 @@ end
 (rule::RRuleWrapperPb)(dy) = rule.pb!!(increment!!(dy, instantiate(rule.l)))
 
 @inline function (rule::RRuleZeroWrapper{R})(f::F, args::Vararg{CoDual,N}) where {R,F,N}
-    y, pb!! = rule.rule(f, args...)
+    y, pb!! = __call_rule(rule.rule, (f, args...))
     l = lazy_zero_rdata(primal(y))
     return y::CoDual, (pb!! isa NoPullback ? pb!! : RRuleWrapperPb(pb!!, l))
 end
@@ -988,6 +988,19 @@ end
     uf_args = __unflatten_codual_varargs(_isva(fwds), args, fwds.nargs)
     pb = Pullback(sig, fwds.pb_oc_ref, _isva(fwds), N)
     return fwds.fwds_oc(uf_args...)::CoDual, pb
+end
+
+# On Julia 1.10, restore type stability lost to the inferencebarrier in __call_rule by
+# asserting the return type. Both the CoDual and Pullback types are encoded in DerivedRule's
+# type parameters; the Pullback's nargs comes from the number of args at the call site.
+@static if VERSION < v"1.11-"
+    @inline function __call_rule(
+        rule::DerivedRule{Tp,FA,FR,RA,RR,isva,Val{pnargs}}, args::A
+    ) where {Tp,FA,FR,RA,RR,isva,pnargs,A<:Tuple}
+        return __call_rule_erased!(
+            Base.inferencebarrier(rule), args
+        )::Tuple{FR,Pullback{Tp,RA,RR,isva,fieldcount(A)}}
+    end
 end
 
 """
@@ -1842,7 +1855,7 @@ function (dynamic_rule::DynamicDerivedRule)(args::Vararg{Any,N}) where {N}
         rule = build_rrule(interp, sig; debug_mode=dynamic_rule.debug_mode)
         dynamic_rule.cache[sig] = rule
     end
-    return rule(args...)
+    return __call_rule(rule, args)
 end
 
 """
@@ -1925,14 +1938,36 @@ end
 # Create new lazy rule with same method instance and debug mode
 _copy(x::P) where {P<:LazyDerivedRule} = P(x.mi, x.debug_mode)
 
+# On Julia 1.10, the generic __call_rule fallback is @stable-checked and returns Any for
+# LazyDerivedRule, triggering TypeInstabilityError when dispatch_doctor_mode = "error".
+# Add type-asserting specialisations so callers in @stable contexts see a concrete type.
+# LazyDerivedRule doesn't contain an OpaqueClosure directly, so no inferencebarrier needed.
+@static if VERSION < v"1.11-"
+    @inline function __call_rule(
+        rule::LazyDerivedRule{sig,DerivedRule{Tp,FA,FR,RA,RR,isva,Val{pnargs}}}, args::A
+    ) where {sig,Tp,FA,FR,RA,RR,isva,pnargs,A<:Tuple}
+        return rule(args...)::Tuple{FR,Pullback{Tp,RA,RR,isva,fieldcount(A)}}
+    end
+    @inline function __call_rule(
+        rule::LazyDerivedRule{
+            sig,DebugRRule{DerivedRule{Tp,FA,CoDual{P,FD},RA,RR,isva,Val{pnargs}}}
+        },
+        args::A,
+    ) where {sig,Tp,FA,P,FD,RA,RR,isva,pnargs,A<:Tuple}
+        return rule(
+            args...
+        )::Tuple{CoDual{P,FD},DebugPullback{Pullback{Tp,RA,RR,isva,fieldcount(A)},P}}
+    end
+end
+
 @inline function (rule::LazyDerivedRule)(args::Vararg{Any,N}) where {N}
-    return isdefined(rule, :rule) ? rule.rule(args...) : _build_rule!(rule, args)
+    return isdefined(rule, :rule) ? __call_rule(rule.rule, args) : _build_rule!(rule, args)
 end
 
 @noinline function _build_rule!(rule::LazyDerivedRule{sig,Trule}, args) where {sig,Trule}
     interp = get_interpreter(ReverseMode)
     rule.rule = build_rrule(interp, rule.mi; debug_mode=rule.debug_mode)
-    return rule.rule(args...)
+    return __call_rule(rule.rule, args)
 end
 
 """
