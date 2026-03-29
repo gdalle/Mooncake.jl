@@ -18,7 +18,8 @@ Please refer to [the docs](https://chalk-lab.github.io/Mooncake.jl/dev) for more
 
 > [!IMPORTANT]
 > `Mooncake.jl` accepts issues and pull requests for reproducible defects only. Feature requests, enhancements, redesign proposals, support requests, and debugging requests without a
-  minimal reproducible example are out of scope and will be closed. Rule coverage is scoped to Julia Base; requests for missing rules outside Julia Base are out of scope.
+  minimal reproducible example are out of scope and will be closed. Although Mooncake currently supports a select subset of Julia standard libraries, mathematical libraries, and
+  `CUDA.jl`, its intended rule-coverage scope is Julia Base, so requests for missing rules outside Julia Base are out of scope.
 
 ## Getting Started
 
