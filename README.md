@@ -17,7 +17,8 @@ The goal of the `Mooncake.jl` project is to produce an AD package written entire
 Please refer to [the docs](https://chalk-lab.github.io/Mooncake.jl/dev) for more info.
 
 > [!IMPORTANT]
-> `Mooncake.jl` accepts issues and pull requests for reproducible defects only. Feature requests, enhancements, redesign proposals, support requests, and debugging requests without a reproducible defect are out of scope and will be closed.
+> `Mooncake.jl` accepts issues and pull requests for reproducible defects only. Feature requests, enhancements, redesign proposals, support requests, and debugging requests without a
+  minimal reproducible example are out of scope and will be closed. Rule coverage is scoped to Julia Base; requests for missing rules outside Julia Base are out of scope.
 
 ## Getting Started
 
