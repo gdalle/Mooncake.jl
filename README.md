@@ -16,6 +16,9 @@
 The goal of the `Mooncake.jl` project is to produce an AD package written entirely in Julia that improves on `ForwardDiff.jl`, `ReverseDiff.jl`, and `Zygote.jl` in several ways.
 Please refer to [the docs](https://chalk-lab.github.io/Mooncake.jl/dev) for more info.
 
+> [!IMPORTANT]
+> `Mooncake.jl` accepts issues and pull requests for reproducible defects only. Feature requests, enhancements, redesign proposals, support requests, and debugging requests without a reproducible defect are out of scope and will be closed.
+
 ## Getting Started
 
 Check that you're running a version of Julia that Mooncake.jl supports.
