@@ -1068,25 +1068,43 @@ struct MooncakeRuleCompilationError <: Exception
 end
 
 function Base.showerror(io::IO, err::MooncakeRuleCompilationError)
+    msg_lines = (
+        "MooncakeRuleCompilationError: an error occurred while Mooncake was compiling a",
+        "rule to differentiate something. If the `caused by` error message below does",
+        "not make it clear to you how the problem can be fixed, please open an issue",
+        "at github.com/chalk-lab/Mooncake.jl describing your problem.",
+    )
+
     # Print the source location of the method being differentiated, if available.
     try
         m = lookup_method(err.sig)
         if m !== nothing
-            println(io, "Mooncake failed to differentiate the following method: $m")
+            mstr = sprint(show, m)
+            header, location = let parts = split(mstr, " @ "; limit=2)
+                length(parts) == 2 ? (parts[1], parts[2]) : (mstr, nothing)
+            end
+            _print_boxed_error(
+                io,
+                (
+                    "Mooncake failed to differentiate the following method:",
+                    header,
+                    "",
+                    msg_lines...,
+                );
+                footer=isnothing(location) ? nothing : "@ $location",
+            )
             println(io)  # blank line before the main error body
+        else
+            _print_boxed_error(io, msg_lines)
+            println(io)
         end
     catch e
         # If method lookup fails for any reason, skip gracefully.
         @debug "MooncakeRuleCompilationError: method lookup failed" exception = e
+        _print_boxed_error(io, msg_lines)
+        println(io)
     end
-    msg =
-        "MooncakeRuleCompilationError: an error occurred while Mooncake was compiling a " *
-        "rule to differentiate something. If the `caused by` error " *
-        "message below does not make it clear to you how the problem can be fixed, " *
-        "please open an issue at github.com/chalk-lab/Mooncake.jl describing your " *
-        "problem.\n" *
-        "To replicate this error run the following:\n"
-    println(io, msg)
+    println(io, "To replicate this error run the following:\n")
     println(
         io,
         "Mooncake.build_rrule(Mooncake.$(err.interp), $(err.sig); debug_mode=$(err.debug_mode))",
@@ -1195,7 +1213,21 @@ function build_derived_rrule(
             return _copy(interp.oc_cache[oc_cache_key])
         else
             # Derive forwards- and reverse-pass IR, and shove in `MistyClosure`s.
-            dri = generate_ir(interp, sig_or_mi; debug_mode)
+            dri = try
+                generate_ir(interp, sig_or_mi; debug_mode)
+            catch err
+                # Julia 1.10 can hit this IR-interpreter limitation during optimization on
+                # otherwise valid derived reverse rules. Retry without optimize_ir! so rule
+                # construction remains robust for those methods.
+                if err isa AssertionError && occursin(
+                    "irinterp is unable to handle heavy recursion",
+                    sprint(showerror, err),
+                )
+                    generate_ir(interp, sig_or_mi; debug_mode, do_optimize=false)
+                else
+                    rethrow()
+                end
+            end
             fwd_oc = misty_closure(dri.fwd_ret_type, dri.fwd_ir, dri.shared_data...)
             rvs_oc = misty_closure(dri.rvs_ret_type, dri.rvs_ir, dri.shared_data...)
 
