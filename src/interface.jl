@@ -761,7 +761,7 @@ end
     _print_boxed_info(
         stdout,
         (
-            "`value_and_gradient!!` route",
+            "`value_and_gradient!!`",
             "mode = :reverse",
             "friendly_tangents = $(friendly_tangents)",
         ),
@@ -821,7 +821,7 @@ end
     _print_boxed_info(
         stdout,
         (
-            "`value_and_gradient!!` route",
+            "`value_and_gradient!!`",
             "mode = :forward",
             "nfwd = $(nfwd)",
             "friendly_tangents = $(!isnothing(cache.input_tangents))",
