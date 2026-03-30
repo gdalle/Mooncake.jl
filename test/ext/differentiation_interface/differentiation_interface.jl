@@ -13,6 +13,16 @@ test_differentiation(
     logging=true,
 )
 
+# Test first-order differentiation (forward mode)
+test_differentiation(
+    [
+        AutoMooncakeForward(; config=nothing),
+        AutoMooncakeForward(; config=Mooncake.Config()),
+    ];
+    excluded=SECOND_ORDER,
+    logging=true,
+)
+
 # Test for world-age fix when using closures (#916, #632)
 # The bug occurs when:
 # 1. prepare_hessian creates cached rules with MistyClosures
