@@ -279,7 +279,7 @@ end
 # Internal helper cache types in this file:
 # - `NfwdCache`: internal nfwd helper cache stored inside `ForwardCache` when the
 #   prepared forward cache can use packed NDual execution.
-struct Cache{Trule,Ty_cache,Ttangents<:Tuple,Tdests,Tȳ_cache,TIS<:Tuple}
+struct Cache{Trule,Ty_cache,Ttangents<:Tuple,Tdests,Tȳ_cache,TIS<:Tuple,TOS}
     rule::Trule
     # Cache for function output; **primal** type for y.
     y_cache::Ty_cache
@@ -293,9 +293,42 @@ struct Cache{Trule,Ty_cache,Ttangents<:Tuple,Tdests,Tȳ_cache,TIS<:Tuple}
     ȳ_cache::Tȳ_cache
     # Top-level type/size signature for (f, x...), used to reject cache misuse early.
     input_specs::TIS
+    # Top-level type/size signature for y = f(x...).
+    output_spec::TOS
 end
 
 @inline _cache_input_count(cache) = length(getfield(cache, :input_specs)) - 1
+@inline _cache_x_input_specs(cache::Cache) = Base.tail(getfield(cache, :input_specs))
+
+@inline function _cache_type_size_summary(::Type{T}) where {T}
+    return if T <: IEEEFloat || T <: Complex{<:IEEEFloat}
+        "scalar"
+    elseif T <: AbstractArray
+        "size unknown"
+    elseif T === Any
+        "unknown"
+    elseif T <: NamedTuple
+        "named tuple"
+    elseif T <: Tuple
+        "tuple"
+    elseif T <: Function
+        "function"
+    elseif fieldcount(T) > 0 || Base.ismutabletype(T)
+        "struct"
+    else
+        "value"
+    end
+end
+
+@inline _cache_type_summary(::Type{T}) where {T} =
+    T === Any ? "unknown" : "$(T) ($(_cache_type_size_summary(T)))"
+
+function _cache_print_io_summary(io::IO, input_specs::Tuple, output_summary)
+    for (i, spec) in enumerate(input_specs)
+        print(io, "\n  input_", i, ": ", _cache_spec_summary(spec))
+    end
+    print(io, "\n  output: ", output_summary)
+end
 
 function Base.show(io::IO, cache::Cache)
     print(
@@ -320,6 +353,9 @@ function Base.show(io::IO, ::MIME"text/plain", cache::Cache)
         "\n",
         "  inputs: ",
         _cache_input_count(cache),
+    )
+    _cache_print_io_summary(
+        io, _cache_x_input_specs(cache), _cache_spec_summary(getfield(cache, :output_spec))
     )
 end
 
@@ -632,6 +668,7 @@ The API guarantees that tangents are initialized at zero before the first autodi
             dests,
             zero_tangent(primal(y)),
             tuple_map(_prepared_cache_input_spec, fx),
+            _prepared_cache_input_spec(primal(y)),
         )
     else
         return Cache(
@@ -641,6 +678,7 @@ The API guarantees that tangents are initialized at zero before the first autodi
             nothing,
             nothing,
             tuple_map(_prepared_cache_input_spec, fx),
+            _prepared_cache_input_spec(primal(y)),
         )
     end
 end
@@ -743,6 +781,7 @@ The API guarantees that tangents are initialized at zero before the first autodi
             dests,
             nothing,
             tuple_map(_prepared_cache_input_spec, fx),
+            _prepared_cache_input_spec(primal(y)),
         )
     else
         return Cache(
@@ -752,6 +791,7 @@ The API guarantees that tangents are initialized at zero before the first autodi
             nothing,
             nothing,
             tuple_map(_prepared_cache_input_spec, fx),
+            _prepared_cache_input_spec(primal(y)),
         )
     end
 end
@@ -852,16 +892,33 @@ struct ForwardCache{R,IT<:Union{Nothing,Tuple},OP,FG,GW,CF,S<:Tuple}
     friendly_gradients::FG
     gradient_workspace::GW
     gradient_chunk_size::Int
+    gradient_chunk_size_auto::Bool
     chunkcache::CF
     input_specs::S
 end
 
-@inline _forward_cache_configured_chunk_size(cache::ForwardCache) =
-    if getfield(cache, :gradient_chunk_size) == 0
-        :default
+@inline _cache_x_input_specs(cache::ForwardCache) = Base.tail(getfield(cache, :input_specs))
+
+@inline function _forward_cache_display_chunk_size(cache::ForwardCache)
+    chunk_size = getfield(cache, :gradient_chunk_size)
+    return getfield(cache, :gradient_chunk_size_auto) ? "$(chunk_size) (auto)" : chunk_size
+end
+
+@inline _dual_primal_type(::Type) = Any
+@inline _dual_primal_type(::Type{Dual{Y,T}}) where {Y,T} = Y
+
+@inline function _forward_cache_output_summary(cache::ForwardCache)
+    output_primal = getfield(cache, :output_primal)
+    return if !isnothing(output_primal)
+        _cache_spec_summary(_prepared_cache_input_spec(output_primal))
     else
-        getfield(cache, :gradient_chunk_size)
+        dual_arg_types = Tuple{
+            map(spec -> dual_type(spec.type), getfield(cache, :input_specs))...
+        }
+        output_type = Core.Compiler.return_type(getfield(cache, :rule), dual_arg_types)
+        _cache_type_summary(_dual_primal_type(output_type))
     end
+end
 
 function Base.show(io::IO, cache::ForwardCache)
     print(
@@ -873,7 +930,7 @@ function Base.show(io::IO, cache::ForwardCache)
         ", nfwd=",
         !isnothing(getfield(cache, :chunkcache)),
         ", chunk_size=",
-        _forward_cache_configured_chunk_size(cache),
+        _forward_cache_display_chunk_size(cache),
         ", inputs=",
         _cache_input_count(cache),
         ")",
@@ -892,10 +949,13 @@ function Base.show(io::IO, ::MIME"text/plain", cache::ForwardCache)
         !isnothing(getfield(cache, :chunkcache)),
         "\n",
         "  chunk_size: ",
-        _forward_cache_configured_chunk_size(cache),
+        _forward_cache_display_chunk_size(cache),
         "\n",
         "  inputs: ",
         _cache_input_count(cache),
+    )
+    _cache_print_io_summary(
+        io, _cache_x_input_specs(cache), _forward_cache_output_summary(cache)
     )
 end
 
@@ -917,6 +977,26 @@ struct PreparedCacheInputSpec{S}
     type::DataType
     size::S
 end
+
+@inline function _cache_spec_size_summary(spec)
+    return if spec.type <: IEEEFloat || spec.type <: Complex{<:IEEEFloat}
+        "scalar"
+    elseif spec.type <: AbstractArray
+        "size $(spec.size)"
+    elseif spec.type <: NamedTuple
+        "named tuple"
+    elseif spec.type <: Tuple
+        "tuple"
+    elseif spec.type <: Function
+        "function"
+    elseif fieldcount(spec.type) > 0 || Base.ismutabletype(spec.type)
+        "struct"
+    else
+        "value"
+    end
+end
+
+@inline _cache_spec_summary(spec) = "$(spec.type) ($(_cache_spec_size_summary(spec)))"
 
 """
     NTangent(lanes)
@@ -960,12 +1040,8 @@ end
 end
 
 @inline function _fcache_gradient_chunk_size(cache::ForwardCache, total_dof::Int)
-    requested = cache.gradient_chunk_size
-    return if requested == 0
-        min(total_dof, _CHUNK_NFWD_MAX_LANES)
-    else
-        min(total_dof, requested)
-    end
+    total_dof == 0 && return 0
+    return cache.gradient_chunk_size
 end
 
 @inline _prepared_cache_arg_label(i::Int) = i == 1 ? "`f`" : "`x$(i - 1)`"
@@ -1581,8 +1657,15 @@ Returns a cache used with [`value_and_derivative!!`](@ref). See that function fo
     f, x::Vararg{Any,N}; config=Config()
 ) where {N}
     fx = (f, x...)
-    gradient_chunk_size = let requested = getfield(config, :chunk_size)
+    requested_gradient_chunk_size = let requested = getfield(config, :chunk_size)
         isnothing(requested) ? 0 : Nfwd._nfwd_check_chunk_size(requested)
+    end
+    gradient_chunk_size_auto = requested_gradient_chunk_size == 0
+    total_dof = _fcache_gradient_input_dof(fx)
+    gradient_chunk_size = if gradient_chunk_size_auto
+        min(total_dof, _CHUNK_NFWD_MAX_LANES)
+    else
+        min(total_dof, requested_gradient_chunk_size)
     end
     rule = build_frule(fx...; config.debug_mode, config.silence_debug_messages)
 
@@ -1602,6 +1685,7 @@ Returns a cache used with [`value_and_derivative!!`](@ref). See that function fo
             _copy_output(fx),
             gradient_workspace,
             gradient_chunk_size,
+            gradient_chunk_size_auto,
             _fcache_build_nfwd_chunk_cache(fx, config),
             tuple_map(_prepared_cache_input_spec, fx),
         )
@@ -1614,6 +1698,7 @@ Returns a cache used with [`value_and_derivative!!`](@ref). See that function fo
             nothing,
             gradient_workspace,
             gradient_chunk_size,
+            gradient_chunk_size_auto,
             _fcache_build_nfwd_chunk_cache(fx, config),
             tuple_map(_prepared_cache_input_spec, fx),
         )
@@ -1986,7 +2071,7 @@ end
 Cache type used by [`prepare_hvp_cache`](@ref) and [`prepare_hessian_cache`](@ref) for
 repeated Hessian-vector product and Hessian evaluations.
 """
-struct HVPCache{Tf,Tgrad_f,Tgrad_tangent,Tfwd_cache}
+struct HVPCache{Tf,Tgrad_f,Tgrad_tangent,Tfwd_cache,TOS}
     f::Tf
     grad_f::Tgrad_f
     # Pre-computed zero tangent for grad_f; the function is never perturbed, only x is.
@@ -1995,13 +2080,23 @@ struct HVPCache{Tf,Tgrad_f,Tgrad_tangent,Tfwd_cache}
     # closure/capture structure that zero_tangent depends on.
     grad_tangent::Tgrad_tangent
     fwd_cache::Tfwd_cache
+    output_spec::TOS
 end
+
+@inline _hvp_cache_uses_nfwd(cache::HVPCache) =
+    !isnothing(getfield(getfield(cache, :fwd_cache), :chunkcache))
+@inline _hvp_cache_x_input_specs(cache::HVPCache) = Base.tail(
+    getfield(getfield(cache, :fwd_cache), :input_specs)
+)
 
 function Base.show(io::IO, cache::HVPCache)
     print(
         io,
         "Mooncake.HVPCache(",
         "mode=:forward_over_reverse, ",
+        "nfwd=",
+        _hvp_cache_uses_nfwd(cache),
+        ", ",
         "inputs=",
         _cache_input_count(getfield(cache, :fwd_cache)),
         ")",
@@ -2013,8 +2108,16 @@ function Base.show(io::IO, ::MIME"text/plain", cache::HVPCache)
         io,
         "Mooncake.HVPCache\n",
         "  mode: forward_over_reverse\n",
+        "  nfwd: ",
+        _hvp_cache_uses_nfwd(cache),
+        "\n",
         "  inputs: ",
         _cache_input_count(getfield(cache, :fwd_cache)),
+    )
+    _cache_print_io_summary(
+        io,
+        _hvp_cache_x_input_specs(cache),
+        _cache_spec_summary(getfield(cache, :output_spec)),
     )
 end
 
@@ -2093,7 +2196,9 @@ true
         end
     end
     fwd_cache = prepare_derivative_cache(grad_f, x...; config)
-    return HVPCache(f, grad_f, zero_tangent(grad_f), fwd_cache)
+    return HVPCache(
+        f, grad_f, zero_tangent(grad_f), fwd_cache, getfield(grad_cache, :output_spec)
+    )
 end
 
 """

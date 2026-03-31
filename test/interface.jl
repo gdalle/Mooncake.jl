@@ -142,6 +142,8 @@ end
             @test occursin("Mooncake.Cache", reverse_plain)
             @test occursin("mode: reverse", reverse_plain)
             @test occursin("friendly_tangents: true", reverse_plain)
+            @test occursin("input_1: Float64 (scalar)", reverse_plain)
+            @test occursin("output: Float64 (scalar)", reverse_plain)
 
             forward_cache = Mooncake.prepare_derivative_cache(
                 sin,
@@ -166,15 +168,21 @@ end
             @test occursin("friendly_tangents: true", forward_plain)
             @test occursin("nfwd: false", forward_plain)
             @test occursin("chunk_size: 2", forward_plain)
+            @test occursin("input_1: Float64 (scalar)", forward_plain)
+            @test occursin("output: Float64 (scalar)", forward_plain)
 
             hvp_cache = Mooncake.prepare_hvp_cache(sin, 1.0)
             hvp_show = sprint(show, hvp_cache)
             @test occursin("Mooncake.HVPCache(", hvp_show)
             @test occursin("mode=:forward_over_reverse", hvp_show)
+            @test occursin("nfwd=false", hvp_show)
 
             hvp_plain = repr(MIME"text/plain"(), hvp_cache)
             @test occursin("Mooncake.HVPCache", hvp_plain)
             @test occursin("mode: forward_over_reverse", hvp_plain)
+            @test occursin("nfwd: false", hvp_plain)
+            @test occursin("input_1: Float64 (scalar)", hvp_plain)
+            @test occursin("output: Float64 (scalar)", hvp_plain)
         end
 
         @testset "friendly tangents" begin
