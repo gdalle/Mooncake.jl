@@ -1138,6 +1138,13 @@ end
 )
     haskey(seen, x) && return 0
     _fcache_mark_seen!(seen, x)
+    if x isa _BuiltinArrays
+        total = 0
+        for i in eachindex(x)
+            isassigned(x, i) && (total += 1)
+        end
+        return total
+    end
     return length(x)
 end
 @inline function _fcache_gradient_input_dof(
@@ -1145,6 +1152,13 @@ end
 )
     haskey(seen, x) && return 0
     _fcache_mark_seen!(seen, x)
+    if x isa _BuiltinArrays
+        total = 0
+        for i in eachindex(x)
+            isassigned(x, i) && (total += 2)
+        end
+        return total
+    end
     return 2 * length(x)
 end
 @inline function _fcache_gradient_input_dof(x::AbstractArray, seen::IdDict{Any,Any})
@@ -1152,8 +1166,15 @@ end
     haskey(seen, x) && return 0
     _fcache_mark_seen!(seen, x)
     total = 0
-    for xi in x
-        total += _fcache_gradient_input_dof(xi, seen)
+    if x isa _BuiltinArrays
+        for i in eachindex(x)
+            isassigned(x, i) || continue
+            total += _fcache_gradient_input_dof(x[i], seen)
+        end
+    else
+        for xi in x
+            total += _fcache_gradient_input_dof(xi, seen)
+        end
     end
     return total
 end

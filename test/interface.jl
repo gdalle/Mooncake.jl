@@ -1180,6 +1180,12 @@ end
 
     @testset "value_and_hvp!!" begin
         TestUtils.test_hook(Val(:allow_unstable_hvp_interface_test)) do
+            @testset "fcache dof skips undefined builtin-array slots" begin
+                x = Vector{Any}(undef, 2)
+                x[1] = 1.0
+                @test Mooncake._fcache_gradient_input_dof(x) == 1
+            end
+
             @testset "multi-argument HVP validates direction arity" begin
                 f(x, y) = sum(x .* x) + sum(y .* y)
                 x = [1.0, 2.0]
